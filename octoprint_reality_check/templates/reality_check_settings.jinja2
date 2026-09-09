@@ -22,33 +22,29 @@
 
     <h4>{{ _('Notifications') }}</h4>
     <div class="control-group">
-        <label class="control-label">{{ _('Show popups for') }}</label>
         <div class="controls">
-            <select data-bind="value: settings.plugins.reality_check.notify_level">
-                <option value="blocks">{{ _('Blocked prints only') }}</option>
-                <option value="all">{{ _('Everything (pass/skip too)') }}</option>
-            </select>
+            <label class="checkbox">
+                <input type="checkbox"
+                       data-bind="checked: settings.plugins.reality_check.popup_on_pass">
+                {{ _('Also show popups for passed/skipped checks') }}
+            </label>
             <span class="help-block">
-                {{ _('Every result is always written to the log and shown in the Reality Check tab.') }}
+                {{ _('Blocked prints always pop up. Every result is always written to the log and to the Recent checks table in the Reality Check tab.') }}
             </span>
         </div>
     </div>
 
     <h4>{{ _('Polling') }}</h4>
     <div class="control-group">
-        <label class="control-label">{{ _('Refresh interval (s)') }}</label>
+        <label class="control-label">{{ _('Refresh interval') }}</label>
         <div class="controls">
-            <input type="number" min="5" step="1" class="input-mini"
-                   data-bind="value: settings.plugins.reality_check.refresh_interval">
-        </div>
-    </div>
-    <div class="control-group">
-        <label class="control-label">{{ _('Tool count') }}</label>
-        <div class="controls">
-            <input type="number" min="1" max="8" step="1" class="input-mini"
-                   data-bind="value: settings.plugins.reality_check.tool_count">
+            <div class="input-append">
+                <input type="number" min="5" step="1" class="input-mini"
+                       data-bind="value: settings.plugins.reality_check.refresh_interval">
+                <span class="add-on">s</span>
+            </div>
             <span class="help-block">
-                {{ _('Tools to poll - raise for toolchangers (INDX).') }}
+                {{ _('Tool count follows the printer profile (Settings > Printer Profiles > Print bed & build volume).') }}
             </span>
         </div>
     </div>

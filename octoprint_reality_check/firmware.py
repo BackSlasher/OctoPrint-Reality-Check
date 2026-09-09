@@ -74,10 +74,13 @@ def parse_nozzle_line(line: str) -> Optional[Dict[str, Any]]:
 class FirmwareState:
     """Cached loaded-filament and nozzle state, polled from the firmware."""
 
-    def __init__(self, printer: Any, logger: logging.Logger, tool_count: int = 1) -> None:
+    def __init__(self, printer: Any, logger: logging.Logger,
+                 tool_count_provider: Any = None) -> None:
         self._printer = printer
         self._logger = logger
-        self._tool_count = tool_count
+        # callable returning how many tools to poll (e.g. from OctoPrint's
+        # printer profile); falls back to 1
+        self._tool_count_provider = tool_count_provider
 
         self._query_lock = threading.Lock()  # one in-flight query at a time
         self._state_lock = threading.Lock()  # guards cache + capture state
@@ -89,6 +92,16 @@ class FirmwareState:
         self._filaments: Dict[int, Optional[str]] = {}
         self._nozzles: Dict[int, Dict[str, Any]] = {}
         self._cache_time: Optional[float] = None
+
+    def _tool_count(self) -> int:
+        try:
+            if self._tool_count_provider is not None:
+                count = int(self._tool_count_provider())
+                if count >= 1:
+                    return count
+        except Exception:
+            pass
+        return 1
 
     # ------------------------------------------------------------------ #
     #  comm hooks (delegated from the plugin)                             #
@@ -162,7 +175,7 @@ class FirmwareState:
 
         any_success = False
 
-        for tool in range(self._tool_count):
+        for tool in range(self._tool_count()):
             line = self._query(f"M865 I{tool}", FILAMENT_ANSWER_RE)
             if line is not None:
                 any_success = True

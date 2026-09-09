@@ -53,7 +53,13 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
 
     def initialize(self) -> None:
         self._firmware = FirmwareState(self._printer, self._logger,
-                                       tool_count=self._settings.get_int(["tool_count"]))
+                                       tool_count_provider=self._profile_tool_count)
+
+    def _profile_tool_count(self) -> int:
+        """Tool count comes from OctoPrint's printer profile - the same place
+        the rest of the UI learns it (raise it there for a toolchanger)."""
+        profile = self._printer_profile_manager.get_current_or_default() or {}
+        return int((profile.get("extruder") or {}).get("count") or 1)
 
     def on_after_startup(self) -> None:
         # The gate runs in the comm send loop and must not wait on serial
@@ -65,10 +71,7 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
 
     def on_settings_save(self, data) -> None:
         octoprint.plugin.SettingsPlugin.on_settings_save(self, data)
-        # apply without a restart: tool count feeds the poller directly,
-        # the timer is rebuilt for a changed interval
-        if self._firmware is not None:
-            self._firmware._tool_count = self._settings.get_int(["tool_count"])
+        # apply without a restart: the timer is rebuilt for a changed interval
         if self._refresh_timer is not None:
             self._refresh_timer.cancel()
         self._refresh_timer = RepeatedTimer(self._settings.get_int(["refresh_interval"]),
@@ -247,9 +250,9 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
             dict(type=level, msg=message, html=html, silent=silent))
 
     def _quiet_alert(self, message: str, level: str = "info") -> None:
-        """Pass/skip/no-data chatter: popup only when notify_level == 'all';
-        always logged and always shown as the tab's last verdict."""
-        silent = self._settings.get(["notify_level"]) != "all"
+        """Pass/skip/no-data chatter: popup only when popup_on_pass is set;
+        always logged and always in the tab's event table."""
+        silent = not self._settings.get_boolean(["popup_on_pass"])
         self._alert(message, level, silent=silent)
 
     # ------------------------------------------------------------------ #
@@ -284,10 +287,9 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
             "check_nozzle": True,
             "warn_only": False,
             "refresh_interval": 30,
-            "tool_count": 1,
-            # "blocks" = popups only for blocked prints; "all" = also show
-            # pass/skip chatter (everything is always logged + in the tab)
-            "notify_level": "blocks",
+            # blocks always pop up; this also pops the pass/skip chatter
+            # (everything is always logged + in the tab's event table)
+            "popup_on_pass": False,
         }
 
     def get_template_configs(self):

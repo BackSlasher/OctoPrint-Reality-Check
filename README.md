@@ -50,20 +50,24 @@ Install manually using this URL:
 
 ## Settings
 
-Via `config.yaml` under `plugins.reality_check` (no settings UI yet):
+In the OctoPrint settings dialog (or `config.yaml` under
+`plugins.reality_check`):
 
 | key | default | meaning |
 |---|---|---|
 | `check_filament` | `true` | compare `; filament_type` against `M865` |
 | `check_nozzle` | `true` | compare `; nozzle_diameter` against `M862.1 Q` |
 | `warn_only` | `false` | pop the mismatch but let the print run |
-| `notify_level` | `"blocks"` | `"blocks"` = popups only when a print is blocked; `"all"` = also pop pass/skip messages (everything is always logged and shown in the tab) |
+| `popup_on_pass` | `false` | also pop pass/skip messages (blocks always pop; everything is always logged and listed in the tab's event table) |
 | `refresh_interval` | `30` | seconds between idle polls of the firmware |
-| `tool_count` | `1` | tools to poll (raise for toolchangers) |
+
+Tool count follows the printer profile's extruder count — raise it there for
+a toolchanger.
 
 ## API
 
-- `GET /api/plugin/reality_check` — current cached firmware state.
+- `GET /api/plugin/reality_check` — current cached firmware state plus the
+  recent-events list.
 - `POST /api/plugin/reality_check` with `{"command": "refresh"}` — poll now.
 
 ## Design notes
