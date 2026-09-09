@@ -67,6 +67,11 @@ In the OctoPrint settings dialog (or `config.yaml` under
 | `popup_on_pass` | `false` | also pop pass/skip messages (blocks always pop; everything is always logged and listed in the tab's event table) |
 | `refresh_interval` | `30` | seconds between idle polls of the firmware |
 
+With `popup_on_pass` enabled, passing checks announce themselves too, and the
+tab's event table keeps the recent history either way:
+
+![A passing check with popup_on_pass enabled](assets/pass-popup.png)
+
 Tool count follows the printer profile's extruder count — raise it there for
 a toolchanger.
 
