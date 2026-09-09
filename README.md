@@ -5,6 +5,8 @@ printer's reality.
 
 ![A print sliced for PLA blocked because the printer reports PETG loaded](assets/block-popup.png)
 
+*A PLA-sliced print blocked and cancelled: the printer reports PETG loaded. The popup names both sides and the ways out.*
+
 Prusa Buddy printers (CORE One, MK4 family, XL...) validate filament type and
 nozzle size themselves — but only for **file-based** prints (USB stick,
 PrusaLink, Connect), where the firmware can read the file's metadata. A print
@@ -38,6 +40,8 @@ refresh button — plus a collapsible table of recent check results:
 
 ![The Reality Check tab: printer inventory and recent checks](assets/tab-events.png)
 
+*The Reality Check tab during a print: per-tool inventory on top, recent check verdicts below.*
+
 ## Requirements
 
 - A Prusa Buddy-firmware printer connected to OctoPrint over serial, with
@@ -59,6 +63,8 @@ In the OctoPrint settings dialog (or `config.yaml` under
 
 ![The settings panel](assets/settings.png)
 
+*The settings panel: check toggles, warn-only, popup level, and the polling interval.*
+
 | key | default | meaning |
 |---|---|---|
 | `check_filament` | `true` | compare `; filament_type` against `M865` |
@@ -71,6 +77,8 @@ With `popup_on_pass` enabled, passing checks announce themselves too, and the
 tab's event table keeps the recent history either way:
 
 ![A passing check with popup_on_pass enabled](assets/pass-popup.png)
+
+*A passing check announcing itself (`popup_on_pass` on), with a blocked attempt visible in the event history.*
 
 Tool count follows the printer profile's extruder count — raise it there for
 a toolchanger.
