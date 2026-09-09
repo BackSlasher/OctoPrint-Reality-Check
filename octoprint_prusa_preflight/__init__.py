@@ -1,0 +1,268 @@
+# coding=utf-8
+"""Pre-print gate comparing the gcode's declared filament/nozzle against
+what the printer's firmware says is actually loaded/fitted.
+
+Prusa Buddy printers validate this themselves for file-based prints (USB,
+PrusaLink, Connect) but serial-streamed prints bypass those checks
+entirely.  OctoPrint sits at the perfect chokepoint: it has the whole file
+(comments included) and the serial port.  This plugin holds the first job
+command in OctoPrint's gcode-queuing phase, compares, and cancels on
+mismatch (or warns, with warn_only).
+"""
+from __future__ import absolute_import, annotations
+
+import os
+import threading
+from typing import Any, Dict, List, Optional
+
+import flask
+import octoprint.plugin
+from octoprint.events import Events
+from octoprint.filemanager import FileDestinations
+from octoprint.util import RepeatedTimer
+
+from octoprint_prusa_preflight import gcode_meta
+from octoprint_prusa_preflight.firmware import FirmwareState
+
+
+class PrusaPreflightPlugin(octoprint.plugin.StartupPlugin,
+                           octoprint.plugin.SettingsPlugin,
+                           octoprint.plugin.AssetPlugin,
+                           octoprint.plugin.SimpleApiPlugin,
+                           octoprint.plugin.EventHandlerPlugin):
+
+    def __init__(self):
+        super().__init__()
+        self._firmware: Optional[FirmwareState] = None
+        self._refresh_timer = None
+        self._gate_lock = threading.RLock()
+        self._gate_result: Optional[bool] = None
+        self._gate_path: Optional[str] = None
+
+    # ------------------------------------------------------------------ #
+    #  lifecycle                                                          #
+    # ------------------------------------------------------------------ #
+
+    def initialize(self) -> None:
+        self._firmware = FirmwareState(self._printer, self._logger,
+                                       tool_count=self._settings.get_int(["tool_count"]))
+
+    def on_after_startup(self) -> None:
+        # The gate runs in the comm send loop and must not wait on serial
+        # (deadlock -- see firmware.py), so keep the cache warm while idle.
+        interval = self._settings.get_int(["refresh_interval"])
+        self._refresh_timer = RepeatedTimer(interval, self._refresh_tick, run_first=True)
+        self._refresh_timer.start()
+        self._logger.info("Prusa Preflight armed")
+
+    def _refresh_tick(self) -> None:
+        if self._firmware is not None:
+            self._firmware.refresh()
+
+    def _refresh_async(self) -> None:
+        if self._firmware is not None:
+            threading.Thread(target=self._firmware.refresh,
+                             name="prusa_preflight_refresh", daemon=True).start()
+
+    def on_event(self, event, payload) -> None:
+        if event in (Events.PRINT_CANCELLED, Events.PRINT_DONE, Events.PRINT_FAILED):
+            with self._gate_lock:
+                self._gate_result = None
+                self._gate_path = None
+            self._refresh_async()
+        elif event == Events.CONNECTED:
+            self._refresh_async()
+
+    # ------------------------------------------------------------------ #
+    #  comm hooks                                                         #
+    # ------------------------------------------------------------------ #
+
+    def on_gcode_sent(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
+        if self._firmware is not None:
+            self._firmware.on_gcode_sent(comm_instance, phase, cmd, cmd_type,
+                                         gcode, *args, **kwargs)
+
+    def on_gcode_received(self, comm_instance, line, *args, **kwargs):
+        if self._firmware is not None:
+            return self._firmware.on_gcode_received(comm_instance, line, *args, **kwargs)
+        return line
+
+    def gate_queuing(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
+        """Hold the first job command until the selected gcode passes."""
+        tags = kwargs.get("tags") or set()
+        if not ({"source:job", "source:file"} & tags):
+            return None
+        if ({"trigger:cancel", "trigger:comm.cancel"} & tags
+                or "script:afterPrintCancelled" in tags):
+            return None
+
+        with self._gate_lock:
+            path = self._selected_file_path(comm_instance)
+            if path != self._gate_path:
+                self._gate_path = path
+                self._gate_result = None
+
+            if self._gate_result is None:
+                try:
+                    self._gate_result = self._check(path)
+                except Exception:
+                    self._logger.exception("Unexpected preflight error")
+                    self._alert("Preflight hit an unexpected error; letting the "
+                                "print through.", "info")
+                    self._gate_result = True
+
+            if not self._gate_result:
+                # OctoPrint ignores cancellation while still STARTING; the
+                # hook fires again for the next job command once the state
+                # is PRINTING, and the cancel sticks then.
+                is_cancelling = getattr(self._printer, "is_cancelling", lambda: False)
+                if not is_cancelling():
+                    self._printer.cancel_print()
+                return (None,)  # suppress this command
+
+        return None
+
+    def _selected_file_path(self, comm_instance) -> Optional[str]:
+        is_sd = getattr(comm_instance, "isSdFileSelected", None)
+        if is_sd and is_sd():
+            return None
+        current = getattr(comm_instance, "_currentFile", None)
+        if current is not None:
+            filename = current.getFilename()
+            if filename:
+                return filename
+        job = self._printer.get_current_job() or {}
+        file_info = job.get("file") or {}
+        if file_info.get("path") and file_info.get("origin") == FileDestinations.LOCAL:
+            return self._file_manager.path_on_disk(FileDestinations.LOCAL, file_info["path"])
+        return None
+
+    # ------------------------------------------------------------------ #
+    #  the actual check                                                   #
+    # ------------------------------------------------------------------ #
+
+    def _check(self, path: Optional[str]) -> bool:
+        """True = let the print through."""
+        warn_only = self._settings.get_boolean(["warn_only"])
+
+        if not path or not os.path.isfile(path):
+            self._alert("Preflight could not read the selected gcode; "
+                        "letting the print through.", "info")
+            return True
+
+        meta = gcode_meta.parse(path)
+        if self._firmware is None or not self._firmware.known():
+            self._alert("Preflight has no answer from the printer yet (M865 "
+                        "unsupported, or not polled since connect); cannot "
+                        "check this print.", "info")
+            return True
+
+        problems: List[str] = []
+
+        if self._settings.get_boolean(["check_filament"]) and meta["filament_types"]:
+            for tool, wanted in enumerate(meta["filament_types"]):
+                if not wanted or not gcode_meta.tool_used(meta, tool):
+                    continue
+                loaded = self._firmware.filament(tool)
+                if loaded is None:
+                    self._alert(f"Printer reports no filament loaded in tool {tool}; "
+                                "filament check skipped.", "info")
+                elif wanted.lower() != loaded.lower():
+                    problems.append(f"gcode is sliced for {wanted} but the printer "
+                                    f"says {loaded} is loaded (tool {tool})")
+
+        if self._settings.get_boolean(["check_nozzle"]) and meta["nozzle_diameters"]:
+            for tool, wanted_d in enumerate(meta["nozzle_diameters"]):
+                if not gcode_meta.tool_used(meta, tool):
+                    continue
+                nozzle = self._firmware.nozzle(tool)
+                if nozzle is None:
+                    continue
+                if abs(wanted_d - nozzle["diameter"]) > 0.01:
+                    problems.append(f"gcode expects a {wanted_d}mm nozzle but the "
+                                    f"printer says {nozzle['diameter']}mm is fitted "
+                                    f"(tool {tool})")
+
+        if not problems:
+            self._alert("Preflight passed: filament and nozzle match the printer.",
+                        "success")
+            return True
+
+        text = "; ".join(problems)
+        if warn_only:
+            self._alert(f"Preflight MISMATCH (warn only): {text}", "error")
+            return True
+        self._alert(f"Print blocked by preflight: {text}. Fix it (reslice, or "
+                    "correct the printer's loaded filament) and print again. "
+                    "Set warn_only to override.", "error")
+        return False
+
+    def _alert(self, message: str, level: str = "info") -> None:
+        self._logger.info(f"[{level}] {message}")
+        self._plugin_manager.send_plugin_message(self._identifier,
+                                                 dict(type=level, msg=message))
+
+    # ------------------------------------------------------------------ #
+    #  api                                                                #
+    # ------------------------------------------------------------------ #
+
+    def get_api_commands(self):
+        return dict(refresh=[])
+
+    def on_api_command(self, command: str, data: Dict):
+        if command == "refresh" and self._firmware is not None:
+            refreshed = self._firmware.refresh()
+            return flask.jsonify(refreshed=refreshed, state=self._firmware.snapshot())
+        return flask.abort(400)
+
+    def on_api_get(self, request):
+        if self._firmware is None:
+            return flask.jsonify(state=None)
+        return flask.jsonify(state=self._firmware.snapshot())
+
+    # ------------------------------------------------------------------ #
+    #  boilerplate                                                        #
+    # ------------------------------------------------------------------ #
+
+    def get_settings_defaults(self):
+        return {
+            "check_filament": True,
+            "check_nozzle": True,
+            "warn_only": False,
+            "refresh_interval": 30,
+            "tool_count": 1,
+        }
+
+    def get_assets(self):
+        return {"js": ["js/prusa_preflight.js"]}
+
+    def get_update_information(self):
+        return dict(
+            prusa_preflight=dict(
+                displayName="Prusa Preflight",
+                displayVersion=self._plugin_version,
+                type="github_commit",
+                user="BackSlasher",
+                repo="OctoPrint-Prusa-Preflight",
+                branch="main",
+                current=self._plugin_version,
+                pip="https://github.com/BackSlasher/OctoPrint-Prusa-Preflight/archive/main.zip",
+            )
+        )
+
+
+__plugin_name__ = "Prusa Preflight"
+__plugin_pythoncompat__ = ">=3,<4"
+
+
+def __plugin_load__() -> None:
+    global __plugin_implementation__
+    __plugin_implementation__ = PrusaPreflightPlugin()
+
+    global __plugin_hooks__
+    __plugin_hooks__ = {
+        "octoprint.plugin.softwareupdate.check_config": __plugin_implementation__.get_update_information,
+        "octoprint.comm.protocol.gcode.queuing": __plugin_implementation__.gate_queuing,
+        "octoprint.comm.protocol.gcode.sent": __plugin_implementation__.on_gcode_sent,
+        "octoprint.comm.protocol.gcode.received": __plugin_implementation__.on_gcode_received,
+    }
