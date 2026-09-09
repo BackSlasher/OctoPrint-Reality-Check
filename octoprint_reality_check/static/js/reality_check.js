@@ -8,8 +8,27 @@ $(function () {
 
         self.tools = ko.observableArray([]);
         self.age = ko.observable("never");
-        self.lastVerdict = ko.observable("-");
         self.refreshing = ko.observable(false);
+        self.events = ko.observableArray([]);
+        self.showEvents = ko.observable(false);
+
+        self.toggleEvents = function () {
+            self.showEvents(!self.showEvents());
+        };
+
+        self._applyEvents = function (events) {
+            if (!events) {
+                return;
+            }
+            // newest first for the table
+            self.events(events.slice().reverse().map(function (e) {
+                return {
+                    time: new Date(e.time * 1000).toLocaleTimeString(),
+                    msg: e.msg,
+                    level: e.level
+                };
+            }));
+        };
 
         self._apply = function (state) {
             if (!state) {
@@ -40,6 +59,7 @@ $(function () {
         self.fetch = function () {
             OctoPrint.simpleApiGet("reality_check").done(function (response) {
                 self._apply(response.state);
+                self._applyEvents(response.events);
             });
         };
 
@@ -48,6 +68,7 @@ $(function () {
             OctoPrint.simpleApiCommand("reality_check", "refresh", {})
                 .done(function (response) {
                     self._apply(response.state);
+                    self._applyEvents(response.events);
                 })
                 .always(function () {
                     self.refreshing(false);
@@ -68,7 +89,6 @@ $(function () {
             if (plugin !== "reality_check" || !data || !data.msg) {
                 return;
             }
-            self.lastVerdict(data.msg);
             self.fetch();
             if (data.silent) {
                 return;

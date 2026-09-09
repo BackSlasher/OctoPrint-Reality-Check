@@ -11,8 +11,10 @@ mismatch (or warns, with warn_only).
 """
 from __future__ import absolute_import, annotations
 
+import collections
 import os
 import threading
+import time
 from typing import Any, Dict, List, Optional
 
 import flask
@@ -41,6 +43,9 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
         self._gate_lock = threading.RLock()
         self._gate_result: Optional[bool] = None
         self._gate_path: Optional[str] = None
+        # bounded in-session history for the tab's collapsible event table;
+        # the full trail lives in octoprint.log
+        self._events = collections.deque(maxlen=20)
 
     # ------------------------------------------------------------------ #
     #  lifecycle                                                          #
@@ -236,6 +241,7 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
     def _alert(self, message: str, level: str = "info",
                html: Optional[str] = None, silent: bool = False) -> None:
         self._logger.info(f"[{level}] {message}")
+        self._events.append(dict(time=time.time(), level=level, msg=message))
         self._plugin_manager.send_plugin_message(
             self._identifier,
             dict(type=level, msg=message, html=html, silent=silent))
@@ -259,13 +265,14 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
     def on_api_command(self, command: str, data: Dict):
         if command == "refresh" and self._firmware is not None:
             refreshed = self._firmware.refresh()
-            return flask.jsonify(refreshed=refreshed, state=self._firmware.snapshot())
+            return flask.jsonify(refreshed=refreshed, state=self._firmware.snapshot(),
+                                 events=list(self._events))
         return flask.abort(400)
 
     def on_api_get(self, request):
         if self._firmware is None:
-            return flask.jsonify(state=None)
-        return flask.jsonify(state=self._firmware.snapshot())
+            return flask.jsonify(state=None, events=list(self._events))
+        return flask.jsonify(state=self._firmware.snapshot(), events=list(self._events))
 
     # ------------------------------------------------------------------ #
     #  boilerplate                                                        #
