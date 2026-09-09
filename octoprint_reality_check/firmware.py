@@ -38,7 +38,7 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
-QUERY_TAG = "plugin:prusa_preflight:query"
+QUERY_TAG = "plugin:reality_check:query"
 RESPONSE_TIMEOUT = 10.0
 
 # firmware spellings of "nothing loaded"

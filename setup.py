@@ -1,16 +1,16 @@
 # coding=utf-8
 
-plugin_identifier = "prusa_preflight"
-plugin_package = "octoprint_prusa_preflight"
-plugin_name = "OctoPrint-Prusa-Preflight"
-plugin_version = "0.2.0"
+plugin_identifier = "reality_check"
+plugin_package = "octoprint_reality_check"
+plugin_name = "OctoPrint-Reality-Check"
+plugin_version = "0.3.0"
 plugin_description = """Pre-print gate for Prusa Buddy printers on serial: compares the
 gcode's declared filament type and nozzle size against what the printer's firmware
 reports (M865 / M862.1 Q) and blocks mismatched prints - the check the printer only
 performs for file-based prints, restored for OctoPrint streaming."""
 plugin_author = "Nitzan Raz"
 plugin_author_email = "nitz.raz@gmail.com"
-plugin_url = "https://github.com/BackSlasher/OctoPrint-Prusa-Preflight"
+plugin_url = "https://github.com/BackSlasher/OctoPrint-Reality-Check"
 plugin_license = "AGPLv3"
 plugin_requires = []
 

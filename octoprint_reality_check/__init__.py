@@ -1,12 +1,12 @@
 # coding=utf-8
-"""Pre-print gate comparing the gcode's declared filament/nozzle against
-what the printer's firmware says is actually loaded/fitted.
+"""Reality Check: block serial prints whose gcode contradicts the printer.
 
-Prusa Buddy printers validate this themselves for file-based prints (USB,
-PrusaLink, Connect) but serial-streamed prints bypass those checks
-entirely.  OctoPrint sits at the perfect chokepoint: it has the whole file
-(comments included) and the serial port.  This plugin holds the first job
-command in OctoPrint's gcode-queuing phase, compares, and cancels on
+Prusa Buddy printers validate filament/nozzle themselves for file-based
+prints (USB, PrusaLink, Connect) but serial-streamed prints bypass those
+checks entirely.  OctoPrint sits at the perfect chokepoint: it has the
+whole file (comments included) and the serial port.  This plugin holds the
+first job command in OctoPrint's gcode-queuing phase, compares the gcode's
+assumptions against the printer's reported reality, and cancels on
 mismatch (or warns, with warn_only).
 """
 from __future__ import absolute_import, annotations
@@ -21,16 +21,18 @@ from octoprint.events import Events
 from octoprint.filemanager import FileDestinations
 from octoprint.util import RepeatedTimer
 
-from octoprint_prusa_preflight import gcode_meta
-from octoprint_prusa_preflight.firmware import FirmwareState
+from octoprint_reality_check import gcode_meta
+from octoprint_reality_check.firmware import FirmwareState
+
+IGNORE_SOLUTION = "Ignore warning (change in plugin settings)"
 
 
-class PrusaPreflightPlugin(octoprint.plugin.StartupPlugin,
-                           octoprint.plugin.SettingsPlugin,
-                           octoprint.plugin.AssetPlugin,
-                           octoprint.plugin.TemplatePlugin,
-                           octoprint.plugin.SimpleApiPlugin,
-                           octoprint.plugin.EventHandlerPlugin):
+class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
+                         octoprint.plugin.SettingsPlugin,
+                         octoprint.plugin.AssetPlugin,
+                         octoprint.plugin.TemplatePlugin,
+                         octoprint.plugin.SimpleApiPlugin,
+                         octoprint.plugin.EventHandlerPlugin):
 
     def __init__(self):
         super().__init__()
@@ -54,7 +56,7 @@ class PrusaPreflightPlugin(octoprint.plugin.StartupPlugin,
         interval = self._settings.get_int(["refresh_interval"])
         self._refresh_timer = RepeatedTimer(interval, self._refresh_tick, run_first=True)
         self._refresh_timer.start()
-        self._logger.info("Prusa Preflight armed")
+        self._logger.info("Reality Check armed")
 
     def _refresh_tick(self) -> None:
         if self._firmware is not None:
@@ -63,7 +65,7 @@ class PrusaPreflightPlugin(octoprint.plugin.StartupPlugin,
     def _refresh_async(self) -> None:
         if self._firmware is not None:
             threading.Thread(target=self._firmware.refresh,
-                             name="prusa_preflight_refresh", daemon=True).start()
+                             name="reality_check_refresh", daemon=True).start()
 
     def on_event(self, event, payload) -> None:
         if event in (Events.PRINT_CANCELLED, Events.PRINT_DONE, Events.PRINT_FAILED):
@@ -107,9 +109,9 @@ class PrusaPreflightPlugin(octoprint.plugin.StartupPlugin,
                 try:
                     self._gate_result = self._check(path)
                 except Exception:
-                    self._logger.exception("Unexpected preflight error")
-                    self._alert("Preflight hit an unexpected error; letting the "
-                                "print through.", "info")
+                    self._logger.exception("Unexpected Reality Check error")
+                    self._quiet_alert("Reality Check hit an unexpected error; "
+                                      "letting the print through.", "info")
                     self._gate_result = True
 
             if not self._gate_result:
@@ -147,18 +149,18 @@ class PrusaPreflightPlugin(octoprint.plugin.StartupPlugin,
         warn_only = self._settings.get_boolean(["warn_only"])
 
         if not path or not os.path.isfile(path):
-            self._alert("Preflight could not read the selected gcode; "
-                        "letting the print through.", "info")
+            self._quiet_alert("Reality Check could not read the selected gcode; "
+                              "letting the print through.", "info")
             return True
 
         meta = gcode_meta.parse(path)
         if self._firmware is None or not self._firmware.known():
-            self._alert("Preflight has no answer from the printer yet (M865 "
-                        "unsupported, or not polled since connect); cannot "
-                        "check this print.", "info")
+            self._quiet_alert("Reality Check has no answer from the printer yet "
+                              "(M865 unsupported, or not polled since connect); "
+                              "cannot check this print.", "info")
             return True
 
-        problems: List[str] = []
+        problems: List[Dict[str, Any]] = []
         verified: List[str] = []
         skipped: List[str] = []
 
@@ -170,8 +172,12 @@ class PrusaPreflightPlugin(octoprint.plugin.StartupPlugin,
                 if loaded is None:
                     skipped.append(f"filament (printer reports none loaded in tool {tool})")
                 elif wanted.lower() != loaded.lower():
-                    problems.append(f"gcode is sliced for {wanted} but the printer "
-                                    f"says {loaded} is loaded (tool {tool})")
+                    problems.append(dict(
+                        text=f"gcode is sliced for {wanted} but printer has "
+                             f"{loaded} (tool {tool}).",
+                        solutions=[f"Slice to {loaded}",
+                                   f"Load {wanted} into the printer",
+                                   IGNORE_SOLUTION]))
                 else:
                     verified.append(f"filament ({loaded})")
 
@@ -184,9 +190,12 @@ class PrusaPreflightPlugin(octoprint.plugin.StartupPlugin,
                     skipped.append(f"nozzle (no answer for tool {tool})")
                     continue
                 if abs(wanted_d - nozzle["diameter"]) > 0.01:
-                    problems.append(f"gcode expects a {wanted_d}mm nozzle but the "
-                                    f"printer says {nozzle['diameter']}mm is fitted "
-                                    f"(tool {tool})")
+                    problems.append(dict(
+                        text=f"gcode expects a {wanted_d}mm nozzle but printer "
+                             f"has {nozzle['diameter']}mm (tool {tool}).",
+                        solutions=[f"Slice for {nozzle['diameter']}mm",
+                                   f"Fit a {wanted_d}mm nozzle",
+                                   IGNORE_SOLUTION]))
                 else:
                     verified.append(f"nozzle ({nozzle['diameter']}mm)")
 
@@ -199,23 +208,31 @@ class PrusaPreflightPlugin(octoprint.plugin.StartupPlugin,
                 parts.append("SKIPPED: " + ", ".join(skipped))
             if not parts:
                 parts.append("nothing to check")
-            self._alert("Preflight passed - " + "; ".join(parts) + ".",
-                        "info" if skipped else "success")
+            self._quiet_alert("Reality check passed - " + "; ".join(parts) + ".",
+                              "info" if skipped else "success")
             return True
 
-        text = "; ".join(problems)
-        if warn_only:
-            self._alert(f"Preflight MISMATCH (warn only): {text}", "error")
-            return True
-        self._alert(f"Print blocked by preflight: {text}. Fix it (reslice, or "
-                    "correct the printer's loaded filament) and print again. "
-                    "Set warn_only to override.", "error")
-        return False
+        for problem in problems:
+            numbered = [f"{i + 1}. {s}" for i, s in enumerate(problem["solutions"])]
+            prefix = "(warn only) " if warn_only else ""
+            plain = prefix + problem["text"] + " Solutions: " + " ".join(numbered)
+            html = (prefix + problem["text"] + "<br>Solutions:<br>"
+                    + "<br>".join(numbered))
+            self._alert(plain, "error", html=html)
+        return warn_only
 
-    def _alert(self, message: str, level: str = "info") -> None:
+    def _alert(self, message: str, level: str = "info",
+               html: Optional[str] = None, silent: bool = False) -> None:
         self._logger.info(f"[{level}] {message}")
-        self._plugin_manager.send_plugin_message(self._identifier,
-                                                 dict(type=level, msg=message))
+        self._plugin_manager.send_plugin_message(
+            self._identifier,
+            dict(type=level, msg=message, html=html, silent=silent))
+
+    def _quiet_alert(self, message: str, level: str = "info") -> None:
+        """Pass/skip/no-data chatter: popup only when notify_level == 'all';
+        always logged and always shown as the tab's last verdict."""
+        silent = self._settings.get(["notify_level"]) != "all"
+        self._alert(message, level, silent=silent)
 
     # ------------------------------------------------------------------ #
     #  api                                                                #
@@ -249,36 +266,39 @@ class PrusaPreflightPlugin(octoprint.plugin.StartupPlugin,
             "warn_only": False,
             "refresh_interval": 30,
             "tool_count": 1,
+            # "blocks" = popups only for blocked prints; "all" = also show
+            # pass/skip chatter (everything is always logged + in the tab)
+            "notify_level": "blocks",
         }
 
     def get_template_configs(self):
-        return [dict(type="tab", name="Preflight", custom_bindings=True)]
+        return [dict(type="tab", name="Reality Check", custom_bindings=True)]
 
     def get_assets(self):
-        return {"js": ["js/prusa_preflight.js"]}
+        return {"js": ["js/reality_check.js"]}
 
     def get_update_information(self):
         return dict(
-            prusa_preflight=dict(
-                displayName="Prusa Preflight",
+            reality_check=dict(
+                displayName="Reality Check",
                 displayVersion=self._plugin_version,
                 type="github_commit",
                 user="BackSlasher",
-                repo="OctoPrint-Prusa-Preflight",
+                repo="OctoPrint-Reality-Check",
                 branch="main",
                 current=self._plugin_version,
-                pip="https://github.com/BackSlasher/OctoPrint-Prusa-Preflight/archive/main.zip",
+                pip="https://github.com/BackSlasher/OctoPrint-Reality-Check/archive/main.zip",
             )
         )
 
 
-__plugin_name__ = "Prusa Preflight"
+__plugin_name__ = "Reality Check"
 __plugin_pythoncompat__ = ">=3,<4"
 
 
 def __plugin_load__() -> None:
     global __plugin_implementation__
-    __plugin_implementation__ = PrusaPreflightPlugin()
+    __plugin_implementation__ = RealityCheckPlugin()
 
     global __plugin_hooks__
     __plugin_hooks__ = {

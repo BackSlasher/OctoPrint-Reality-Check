@@ -9,7 +9,7 @@ import unittest
 
 # Load the pure modules straight from their files: the package __init__
 # imports OctoPrint itself, which the test environment does not have.
-_PKG = os.path.join(os.path.dirname(__file__), "..", "octoprint_prusa_preflight")
+_PKG = os.path.join(os.path.dirname(__file__), "..", "octoprint_reality_check")
 
 
 def _load(name):

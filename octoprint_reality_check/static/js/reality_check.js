@@ -1,9 +1,9 @@
 /*
- * Prusa Preflight frontend: popups for gate verdicts, and the status tab
+ * Reality Check frontend: popups for gate verdicts, and the status tab
  * showing the firmware-truth cache (per-tool filament + nozzle).
  */
 $(function () {
-    function PrusaPreflightViewModel() {
+    function RealityCheckViewModel() {
         var self = this;
 
         self.tools = ko.observableArray([]);
@@ -38,14 +38,14 @@ $(function () {
         };
 
         self.fetch = function () {
-            OctoPrint.simpleApiGet("prusa_preflight").done(function (response) {
+            OctoPrint.simpleApiGet("reality_check").done(function (response) {
                 self._apply(response.state);
             });
         };
 
         self.refresh = function () {
             self.refreshing(true);
-            OctoPrint.simpleApiCommand("prusa_preflight", "refresh", {})
+            OctoPrint.simpleApiCommand("reality_check", "refresh", {})
                 .done(function (response) {
                     self._apply(response.state);
                 })
@@ -59,23 +59,26 @@ $(function () {
         };
 
         self.onTabChange = function (next) {
-            if (next === "#tab_plugin_prusa_preflight") {
+            if (next === "#tab_plugin_reality_check") {
                 self.fetch();
             }
         };
 
         self.onDataUpdaterPluginMessage = function (plugin, data) {
-            if (plugin !== "prusa_preflight" || !data || !data.msg) {
+            if (plugin !== "reality_check" || !data || !data.msg) {
                 return;
             }
             self.lastVerdict(data.msg);
             self.fetch();
+            if (data.silent) {
+                return;
+            }
             var type = data.type === "error" ? "error"
                 : data.type === "success" ? "success"
                     : "info";
             new PNotify({
-                title: "Prusa Preflight",
-                text: data.msg,
+                title: "Reality Check",
+                text: data.html || data.msg,
                 type: type,
                 hide: type !== "error"
             });
@@ -83,8 +86,8 @@ $(function () {
     }
 
     OCTOPRINT_VIEWMODELS.push({
-        construct: PrusaPreflightViewModel,
+        construct: RealityCheckViewModel,
         dependencies: [],
-        elements: ["#tab_plugin_prusa_preflight"]
+        elements: ["#tab_plugin_reality_check"]
     });
 });

@@ -1,6 +1,7 @@
-# OctoPrint-Prusa-Preflight
+# OctoPrint-Reality-Check
 
-Blocks a serial-streamed print when the gcode disagrees with the printer.
+Blocks a serial-streamed print when the gcode's assumptions contradict the
+printer's reality.
 
 Prusa Buddy printers (CORE One, MK4 family, XL...) validate filament type and
 nozzle size themselves — but only for **file-based** prints (USB stick,
@@ -20,13 +21,18 @@ serial port. This plugin restores the missing gate:
 2. When a print starts, it holds the first job command in OctoPrint's
    gcode-queuing phase, reads `; filament_type` and `; nozzle_diameter`
    from the selected file, and compares.
-3. On mismatch it cancels the print and pops an error explaining both sides.
-   Set `warn_only` to get the popup without the cancel.
+3. On mismatch it cancels the print and pops an error naming both sides
+   and the ways out (reslice, reload, or ignore via settings). Set
+   `warn_only` to get the popup without the cancel.
 
 No spool database, no bookkeeping, no companion plugins: the printer is the
 single source of truth. Anything that updates the printer's loaded filament —
 its own load/change UI, or an external `M865 S"PETG" L0` — feeds the check
 automatically.
+
+A **Reality Check tab** in the OctoPrint UI shows the current firmware truth:
+per-tool filament, nozzle (with high-flow/hardened flags), cache age, a manual
+refresh button, and the last verdict.
 
 ## Requirements
 
@@ -40,24 +46,25 @@ automatically.
 
 Install manually using this URL:
 
-    https://github.com/BackSlasher/OctoPrint-Prusa-Preflight/archive/main.zip
+    https://github.com/BackSlasher/OctoPrint-Reality-Check/archive/main.zip
 
 ## Settings
 
-Via `config.yaml` under `plugins.prusa_preflight` (no UI page yet):
+Via `config.yaml` under `plugins.reality_check` (no settings UI yet):
 
 | key | default | meaning |
 |---|---|---|
 | `check_filament` | `true` | compare `; filament_type` against `M865` |
 | `check_nozzle` | `true` | compare `; nozzle_diameter` against `M862.1 Q` |
 | `warn_only` | `false` | pop the mismatch but let the print run |
+| `notify_level` | `"blocks"` | `"blocks"` = popups only when a print is blocked; `"all"` = also pop pass/skip messages (everything is always logged and shown in the tab) |
 | `refresh_interval` | `30` | seconds between idle polls of the firmware |
 | `tool_count` | `1` | tools to poll (raise for toolchangers) |
 
 ## API
 
-- `GET /api/plugin/prusa_preflight` — current cached firmware state.
-- `POST /api/plugin/prusa_preflight` with `{"command": "refresh"}` — poll now.
+- `GET /api/plugin/reality_check` — current cached firmware state.
+- `POST /api/plugin/reality_check` with `{"command": "refresh"}` — poll now.
 
 ## Design notes
 
@@ -68,10 +75,14 @@ Via `config.yaml` under `plugins.prusa_preflight` (no UI page yet):
   of staleness, which produces a spurious prompt, never a bad print.
 - **How serial "RPC" works here:** OctoPrint has no request/response
   primitive. The plugin tags its query, the `gcode.sent` hook spots the tag
-  and opens a capture window, and the protocol's strict lockstep means every
-  received line until the closing `ok` belongs to that query.
-- Unknown states fail open with an explanatory popup: no firmware answer, no
-  metadata in the file, or nothing loaded all let the print through — the
+  and opens a capture window, and the window closes when a received line
+  matches the expected answer (`name:` / `M862.1 T..`). Completion is by
+  content, deliberately not by `ok` — stray acknowledgements from in-flight
+  commands (e.g. right after a cancelled print) must not close the window
+  early. A query that times out keeps the previous cached value; only an
+  explicit `name:---` means "nothing loaded".
+- Unknown states fail open with an explanatory message: no firmware answer,
+  no metadata in the file, or nothing loaded all let the print through — the
   plugin only blocks on a positive contradiction.
 - SD-card prints (from OctoPrint's perspective) are not validated; prints
   started on the printer itself from a file get the firmware's own preview
