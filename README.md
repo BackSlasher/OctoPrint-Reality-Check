@@ -1,42 +1,43 @@
 # OctoPrint-Reality-Check
 
-Blocks a serial-streamed print when the gcode's assumptions contradict the
-printer's reality.
+Block a print if the file wants a different setup than what the printer
+currently reports.
 
 ![A print sliced for PLA blocked because the printer reports PETG loaded](assets/block-popup.png)
 
 *A PLA-sliced print blocked and cancelled: the printer reports PETG loaded. The popup names both sides and the ways out.*
 
 Prusa Buddy printers (CORE One, MK4 family, XL...) validate filament type and
-nozzle size themselves — but only for **file-based** prints (USB stick,
-PrusaLink, Connect), where the firmware can read the file's metadata. A print
-streamed from OctoPrint over serial arrives one naked command at a time and
-bypasses every one of those checks: the firmware's `M862.1 P` handler even
-documents that the parameter "is ignored when printing". Slice with the wrong
-preset and the printer lays PETG on a 60°C bed without a word.
+nozzle size themselves for **file-based** prints (USB stick, PrusaLink,
+Connect), where the firmware can read the file's metadata. Printing over
+serial (e.g. OctoPrint) arrives one command at a time and can't have those
+checks — the firmware's own `M862.1 P` handler documents the parameter as
+"ignored when printing". If you're like me, you'll print a PLA gcode with a
+PETG filament loaded and wonder why the print doesn't adhere to the bed.
+No more!
 
-OctoPrint sits at the perfect chokepoint — it has the whole file *and* the
-serial port. This plugin restores the missing gate:
+Reality Check helps by blocking prints that specify a setup that doesn't
+match the printer's report:
 
 1. While the printer idles, it polls the firmware's own state:
-   `M865 I<tool>` (loaded filament type — the same state the printer's
-   file-print preview trusts) and `M862.1 Q` (fitted nozzle diameter /
-   hardened / high-flow, from EEPROM).
-2. When a print starts, it holds the first job command in OctoPrint's
-   gcode-queuing phase, reads `; filament_type` and `; nozzle_diameter`
-   from the selected file, and compares.
+   `M865 I<tool>` for the loaded filament type, `M862.1 Q` for the nozzle
+   configuration (diameter / hardened / high-flow, from EEPROM).
+2. It plugs into OctoPrint's gcode-queuing phase, reads `; filament_type`
+   and `; nozzle_diameter` from the file, and compares.
 3. On mismatch it cancels the print and pops an error naming both sides
-   and the ways out (reslice, reload, or ignore via settings). Set
-   `warn_only` to get the popup without the cancel.
+   and the ways out. Can be configured to only warn and let the print
+   go through.
 
-No spool database, no bookkeeping, no companion plugins: the printer is the
-single source of truth. Anything that updates the printer's loaded filament —
-its own load/change UI, or an external `M865 S"PETG" L0` — feeds the check
-automatically.
+The main value here is simplicity. There is no persistence, no spool
+database, no companion plugins — world state is read from the printer
+itself, so anything that updates the printer's loaded filament (its own
+load/change UI, or an external `M865 S"PETG" L0`) feeds the check
+automatically. Unexpected states fail open — the plugin only blocks when
+it **knows** there's a mismatch.
 
-A **Reality Check tab** in the OctoPrint UI shows the current firmware truth —
-per-tool filament, nozzle (with high-flow/hardened flags), cache age, a manual
-refresh button — plus a collapsible table of recent check results:
+A dedicated **Reality Check tab** shows the current printer inventory —
+per-tool filament, nozzle (with flags), cache age, a manual refresh
+button — plus an event log of recent checks:
 
 ![The Reality Check tab: printer inventory and recent checks](assets/tab-events.png)
 
