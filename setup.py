@@ -3,7 +3,7 @@
 plugin_identifier = "prusa_preflight"
 plugin_package = "octoprint_prusa_preflight"
 plugin_name = "OctoPrint-Prusa-Preflight"
-plugin_version = "0.1.0"
+plugin_version = "0.2.0"
 plugin_description = """Pre-print gate for Prusa Buddy printers on serial: compares the
 gcode's declared filament type and nozzle size against what the printer's firmware
 reports (M865 / M862.1 Q) and blocks mismatched prints - the check the printer only

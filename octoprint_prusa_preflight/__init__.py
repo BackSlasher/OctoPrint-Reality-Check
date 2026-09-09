@@ -28,6 +28,7 @@ from octoprint_prusa_preflight.firmware import FirmwareState
 class PrusaPreflightPlugin(octoprint.plugin.StartupPlugin,
                            octoprint.plugin.SettingsPlugin,
                            octoprint.plugin.AssetPlugin,
+                           octoprint.plugin.TemplatePlugin,
                            octoprint.plugin.SimpleApiPlugin,
                            octoprint.plugin.EventHandlerPlugin):
 
@@ -158,6 +159,8 @@ class PrusaPreflightPlugin(octoprint.plugin.StartupPlugin,
             return True
 
         problems: List[str] = []
+        verified: List[str] = []
+        skipped: List[str] = []
 
         if self._settings.get_boolean(["check_filament"]) and meta["filament_types"]:
             for tool, wanted in enumerate(meta["filament_types"]):
@@ -165,11 +168,12 @@ class PrusaPreflightPlugin(octoprint.plugin.StartupPlugin,
                     continue
                 loaded = self._firmware.filament(tool)
                 if loaded is None:
-                    self._alert(f"Printer reports no filament loaded in tool {tool}; "
-                                "filament check skipped.", "info")
+                    skipped.append(f"filament (printer reports none loaded in tool {tool})")
                 elif wanted.lower() != loaded.lower():
                     problems.append(f"gcode is sliced for {wanted} but the printer "
                                     f"says {loaded} is loaded (tool {tool})")
+                else:
+                    verified.append(f"filament ({loaded})")
 
         if self._settings.get_boolean(["check_nozzle"]) and meta["nozzle_diameters"]:
             for tool, wanted_d in enumerate(meta["nozzle_diameters"]):
@@ -177,15 +181,26 @@ class PrusaPreflightPlugin(octoprint.plugin.StartupPlugin,
                     continue
                 nozzle = self._firmware.nozzle(tool)
                 if nozzle is None:
+                    skipped.append(f"nozzle (no answer for tool {tool})")
                     continue
                 if abs(wanted_d - nozzle["diameter"]) > 0.01:
                     problems.append(f"gcode expects a {wanted_d}mm nozzle but the "
                                     f"printer says {nozzle['diameter']}mm is fitted "
                                     f"(tool {tool})")
+                else:
+                    verified.append(f"nozzle ({nozzle['diameter']}mm)")
 
         if not problems:
-            self._alert("Preflight passed: filament and nozzle match the printer.",
-                        "success")
+            # Only claim what was actually compared.
+            parts = []
+            if verified:
+                parts.append("verified: " + ", ".join(verified))
+            if skipped:
+                parts.append("SKIPPED: " + ", ".join(skipped))
+            if not parts:
+                parts.append("nothing to check")
+            self._alert("Preflight passed - " + "; ".join(parts) + ".",
+                        "info" if skipped else "success")
             return True
 
         text = "; ".join(problems)
@@ -205,6 +220,9 @@ class PrusaPreflightPlugin(octoprint.plugin.StartupPlugin,
     # ------------------------------------------------------------------ #
     #  api                                                                #
     # ------------------------------------------------------------------ #
+
+    def is_api_protected(self):
+        return True
 
     def get_api_commands(self):
         return dict(refresh=[])
@@ -232,6 +250,9 @@ class PrusaPreflightPlugin(octoprint.plugin.StartupPlugin,
             "refresh_interval": 30,
             "tool_count": 1,
         }
+
+    def get_template_configs(self):
+        return [dict(type="tab", name="Preflight", custom_bindings=True)]
 
     def get_assets(self):
         return {"js": ["js/prusa_preflight.js"]}

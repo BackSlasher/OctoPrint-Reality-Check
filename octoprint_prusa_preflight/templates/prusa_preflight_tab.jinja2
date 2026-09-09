@@ -1,0 +1,35 @@
+<div>
+    <h4>{{ _('What the printer says it has') }}</h4>
+    <table class="table table-striped table-condensed">
+        <thead>
+        <tr>
+            <th>{{ _('Tool') }}</th>
+            <th>{{ _('Filament') }}</th>
+            <th>{{ _('Nozzle') }}</th>
+            <th>{{ _('Flags') }}</th>
+        </tr>
+        </thead>
+        <tbody data-bind="foreach: tools">
+        <tr>
+            <td data-bind="text: tool"></td>
+            <td data-bind="text: filament"></td>
+            <td data-bind="text: nozzle"></td>
+            <td data-bind="text: flags"></td>
+        </tr>
+        </tbody>
+    </table>
+    <p>
+        {{ _('Cache age') }}: <span data-bind="text: age"></span>
+        <button class="btn btn-mini" style="margin-left: 1em"
+                data-bind="click: refresh, enable: !refreshing()">
+            {{ _('Refresh from printer') }}
+        </button>
+    </p>
+    <p>
+        {{ _('Last preflight message') }}:<br>
+        <em data-bind="text: lastVerdict"></em>
+    </p>
+    <p class="muted">
+        {{ _('Polled from the firmware (M865 / M862.1 Q) while the printer idles; the pre-print gate compares the sliced gcode against this.') }}
+    </p>
+</div>

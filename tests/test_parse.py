@@ -20,34 +20,62 @@ def _load(name):
 
 
 gcode_meta = _load("gcode_meta")
-FirmwareState = _load("firmware").FirmwareState
+firmware = _load("firmware")
 
 
 class TestFirmwareParsing(unittest.TestCase):
     def test_m865_response(self):
         # verbatim capture from a CORE One
-        lines = ["name:PETG", "nozzle_temperature:230", "heatbed_temperature:85",
-                 "is_abrasive:0", "requires_filtration:0"]
-        self.assertEqual(FirmwareState.parse_filament(lines), "PETG")
+        self.assertEqual(firmware.parse_filament_line("name:PETG"), "PETG")
 
     def test_m865_nothing_loaded(self):
-        self.assertIsNone(FirmwareState.parse_filament(["name:---"]))
-        self.assertIsNone(FirmwareState.parse_filament(["name:"]))
-        self.assertIsNone(FirmwareState.parse_filament([]))
+        self.assertIsNone(firmware.parse_filament_line("name:---"))
+        self.assertIsNone(firmware.parse_filament_line("name:"))
+        self.assertIsNone(firmware.parse_filament_line("nozzle_temperature:230"))
 
     def test_m862_1_response(self):
-        lines = ["echo:  M862.1 T0 P0.40 A0 F1"]
-        nozzles = FirmwareState.parse_nozzles(lines)
-        self.assertEqual(nozzles[0]["diameter"], 0.4)
-        self.assertFalse(nozzles[0]["hardened"])
-        self.assertTrue(nozzles[0]["high_flow"])
+        nozzle = firmware.parse_nozzle_line("echo:  M862.1 T0 P0.40 A0 F1")
+        self.assertEqual(nozzle["tool"], 0)
+        self.assertEqual(nozzle["diameter"], 0.4)
+        self.assertFalse(nozzle["hardened"])
+        self.assertTrue(nozzle["high_flow"])
 
-    def test_m862_1_multi_tool(self):
-        lines = ["echo:  M862.1 T0 P0.40 A0 F1", "echo:  M862.1 T1 P0.60 A1 F0"]
-        nozzles = FirmwareState.parse_nozzles(lines)
-        self.assertEqual(len(nozzles), 2)
-        self.assertEqual(nozzles[1]["diameter"], 0.6)
-        self.assertTrue(nozzles[1]["hardened"])
+    def test_m862_1_other_tool(self):
+        nozzle = firmware.parse_nozzle_line("echo:  M862.1 T1 P0.60 A1 F0")
+        self.assertEqual(nozzle["tool"], 1)
+        self.assertEqual(nozzle["diameter"], 0.6)
+        self.assertTrue(nozzle["hardened"])
+
+    def test_answer_res_ignore_ok_and_noise(self):
+        # regression for the 0.1.0 clobber: stray oks and other traffic
+        # around a cancelled print must not look like answers
+        for noise in ("ok", "ok N123", "T:230.0 /230.0 B:85.0 /85.0",
+                      "echo:busy: processing", "NORMAL MODE: Percent done: 3"):
+            self.assertIsNone(firmware.FILAMENT_ANSWER_RE.match(noise.strip()))
+            self.assertIsNone(firmware.NOZZLE_ANSWER_RE.search(noise))
+
+
+class TestFailureKeepsState(unittest.TestCase):
+    """A timed-out query must keep the previous cache, not clobber it."""
+
+    class _DeadPrinter:
+        def is_operational(self): return True
+        def is_printing(self): return False
+        def is_paused(self): return False
+        def is_pausing(self): return False
+        def is_cancelling(self): return False
+        def commands(self, *a, **k): pass  # sends, but nothing ever answers
+
+    def test_timeout_keeps_previous_value(self):
+        import logging
+        firmware.RESPONSE_TIMEOUT = 0.05  # don't wait 10s in tests
+        state = firmware.FirmwareState(self._DeadPrinter(), logging.getLogger("t"))
+        state._filaments[0] = "PETG"
+        state._nozzles[0] = {"diameter": 0.4, "hardened": False, "high_flow": True}
+        state._cache_time = 1.0
+        self.assertFalse(state.refresh())          # nothing answered
+        self.assertEqual(state.filament(0), "PETG")  # previous value survives
+        self.assertEqual(state.nozzle(0)["diameter"], 0.4)
 
 
 class TestGcodeMeta(unittest.TestCase):
