@@ -1,5 +1,7 @@
 # OctoPrint-Reality-Check
 
+![tests](https://github.com/BackSlasher/OctoPrint-Reality-Check/actions/workflows/tests.yml/badge.svg)
+
 Block a print if the file wants a different setup than what the printer
 currently reports.
 
@@ -111,3 +113,13 @@ a toolchanger.
 - SD-card prints (from OctoPrint's perspective) are not validated; prints
   started on the printer itself from a file get the firmware's own preview
   checks anyway.
+
+## Development
+
+Written with heavy AI assistance (Anthropic's Claude), with a human in the
+loop for every design decision, and declared as `ai-developed` in the
+OctoPrint plugin repository. Before the first public release the code went
+through an adversarial review pass (which caught, among others, an XSS in
+the popup path and a metadata-parsing tear — both fixed) and was
+field-tested against a real Prusa CORE One: blocked, passed, and
+cache-corruption regression scenarios all exercised on hardware.
