@@ -26,12 +26,17 @@ def _read_head_tail(path: str) -> str:
         f.seek(0, 2)
         size = f.tell()
         if size > HEAD_BYTES + TAIL_BYTES:
+            # non-contiguous: the separator stops a torn line at the gap
+            # from gluing onto the head's last line
             f.seek(size - TAIL_BYTES)
-            tail = f.read(TAIL_BYTES)
+            joined = head + b"\n" + f.read(TAIL_BYTES)
         else:
+            # contiguous: injecting a separator here would SPLIT a value
+            # line that straddles the head boundary (e.g. turn a
+            # nozzle_diameter of 0.45 into 0.4 - silently wrong verdicts)
             f.seek(HEAD_BYTES)
-            tail = f.read()
-    return (head + b"\n" + tail).decode("utf-8", errors="replace")
+            joined = head + f.read()
+    return joined.decode("utf-8", errors="replace")
 
 
 def _split(raw: str, sep: str) -> List[str]:

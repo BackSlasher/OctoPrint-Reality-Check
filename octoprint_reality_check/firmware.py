@@ -85,6 +85,7 @@ class FirmwareState:
         self._query_lock = threading.Lock()  # one in-flight query at a time
         self._state_lock = threading.Lock()  # guards cache + capture state
         self._window_open = False
+        self._expected_cmd: Optional[str] = None
         self._answer_re: Optional[re.Pattern] = None
         self._answer_line: Optional[str] = None
         self._response_done = threading.Event()
@@ -111,8 +112,12 @@ class FirmwareState:
                       subcode=None, tags=None, *args, **kwargs) -> None:
         if tags and QUERY_TAG in tags:
             with self._state_lock:
-                self._window_open = True
-                self._answer_line = None
+                # only the command the CURRENT query waits on may open the
+                # window: a timed-out earlier query can still transmit later,
+                # and its late answer must not be attributed to this one
+                if cmd == self._expected_cmd:
+                    self._window_open = True
+                    self._answer_line = None
 
     def on_gcode_received(self, comm_instance, line, *args, **kwargs) -> str:
         try:
@@ -138,21 +143,26 @@ class FirmwareState:
             self._response_done.clear()
             with self._state_lock:
                 self._window_open = False
+                self._expected_cmd = command
                 self._answer_re = answer_re
                 self._answer_line = None
             try:
                 self._printer.commands(command, tags={QUERY_TAG})
             except Exception as e:
                 self._logger.warning(f"Could not send {command}: {e}")
+                with self._state_lock:
+                    self._expected_cmd = None
                 return None
             if not self._response_done.wait(RESPONSE_TIMEOUT):
                 self._logger.warning(f"{command} went unanswered within "
                                      f"{RESPONSE_TIMEOUT}s; keeping previous state")
                 with self._state_lock:
                     self._window_open = False
+                    self._expected_cmd = None
                     self._answer_re = None
                 return None
             with self._state_lock:
+                self._expected_cmd = None
                 self._answer_re = None
                 return self._answer_line
 
@@ -210,6 +220,13 @@ class FirmwareState:
     def filament(self, tool: int) -> Optional[str]:
         with self._state_lock:
             return self._filaments.get(tool)
+
+    def filament_known(self, tool: int) -> bool:
+        """True when the firmware has ever answered for this tool - None from
+        filament() then really means "nothing loaded" (an explicit name:---),
+        not "never asked"."""
+        with self._state_lock:
+            return tool in self._filaments
 
     def nozzle(self, tool: int) -> Optional[Dict[str, Any]]:
         with self._state_lock:

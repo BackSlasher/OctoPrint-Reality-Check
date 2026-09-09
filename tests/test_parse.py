@@ -119,6 +119,15 @@ class TestGcodeMeta(unittest.TestCase):
         self.assertIsNone(meta["nozzle_diameters"])
         self.assertTrue(gcode_meta.tool_used(meta, 0))
 
+    def test_value_line_straddling_head_boundary(self):
+        # regression: a contiguous small file must not get a newline
+        # injected at the 8KB head boundary - it tore "0.45" into "0.4"
+        filler = "; " + "x" * 8170 + "\n"  # pushes the next line across 8192
+        path = self._write(filler + "; nozzle_diameter = 0.45\n"
+                                    "; filament_type = PETG\n")
+        meta = gcode_meta.parse(path)
+        self.assertEqual(meta["nozzle_diameters"], [0.45])
+
     def test_footer_beyond_head_window(self):
         # config block must be found even in a file bigger than the head read
         filler = ("G1 X123.456 Y654.321 E0.12345\n" * 20000)

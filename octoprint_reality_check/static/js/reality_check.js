@@ -40,7 +40,7 @@ $(function () {
             Object.keys(nozzles).forEach(function (k) {
                 if (keys.indexOf(k) < 0) keys.push(k);
             });
-            keys.sort();
+            keys.sort(function (a, b) { return a - b; });
             self.tools(keys.map(function (k) {
                 var n = nozzles[k];
                 var flags = [];
@@ -96,9 +96,13 @@ $(function () {
             var type = data.type === "error" ? "error"
                 : data.type === "success" ? "success"
                     : "info";
+            // PNotify renders text as HTML. data.html is server-built with
+            // escaped values; a plain msg (which can embed gcode-comment or
+            // firmware-reported strings) must be escaped here.
+            var text = data.html || $("<div>").text(data.msg).html();
             new PNotify({
                 title: "Reality Check",
-                text: data.html || data.msg,
+                text: text,
                 type: type,
                 hide: type !== "error"
             });

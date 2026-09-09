@@ -18,6 +18,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 import flask
+import markupsafe
 import octoprint.plugin
 from octoprint.events import Events
 from octoprint.filemanager import FileDestinations
@@ -64,19 +65,27 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
     def on_after_startup(self) -> None:
         # The gate runs in the comm send loop and must not wait on serial
         # (deadlock -- see firmware.py), so keep the cache warm while idle.
-        interval = self._settings.get_int(["refresh_interval"])
-        self._refresh_timer = RepeatedTimer(interval, self._refresh_tick, run_first=True)
+        self._refresh_timer = RepeatedTimer(self._interval(), self._refresh_tick,
+                                            run_first=True)
         self._refresh_timer.start()
         self._logger.info("Reality Check armed")
 
+    def _interval(self) -> int:
+        # the template's min=5 is client-side only; a bad stored value must
+        # not stall (None) or hammer (0/negative) the serial link
+        return max(5, self._settings.get_int(["refresh_interval"]) or 30)
+
     def on_settings_save(self, data) -> None:
         octoprint.plugin.SettingsPlugin.on_settings_save(self, data)
-        # apply without a restart: the timer is rebuilt for a changed interval
-        if self._refresh_timer is not None:
-            self._refresh_timer.cancel()
-        self._refresh_timer = RepeatedTimer(self._settings.get_int(["refresh_interval"]),
-                                            self._refresh_tick, run_first=True)
-        self._refresh_timer.start()
+        # apply without a restart: the timer is rebuilt for a changed
+        # interval (under the lock - two concurrent saves must not leave an
+        # orphan timer polling forever)
+        with self._gate_lock:
+            if self._refresh_timer is not None:
+                self._refresh_timer.cancel()
+            self._refresh_timer = RepeatedTimer(self._interval(), self._refresh_tick,
+                                                run_first=True)
+            self._refresh_timer.start()
 
     def _refresh_tick(self) -> None:
         if self._firmware is not None:
@@ -190,7 +199,10 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
                     continue
                 loaded = self._firmware.filament(tool)
                 if loaded is None:
-                    skipped.append(f"filament (printer reports none loaded in tool {tool})")
+                    if self._firmware.filament_known(tool):
+                        skipped.append(f"filament (printer reports none loaded in tool {tool})")
+                    else:
+                        skipped.append(f"filament (no answer yet for tool {tool})")
                 elif wanted.lower() != loaded.lower():
                     problems.append(dict(
                         text=f"gcode is sliced for {wanted} but printer has "
@@ -236,15 +248,21 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
             numbered = [f"{i + 1}. {s}" for i, s in enumerate(problem["solutions"])]
             prefix = "(warn only) " if warn_only else ""
             plain = prefix + problem["text"] + " Solutions: " + " ".join(numbered)
-            html = (prefix + problem["text"] + "<br>Solutions:<br>"
-                    + "<br>".join(numbered))
+            # values in problem text/solutions come from gcode comments and
+            # firmware responses - hostile input; PNotify renders text as
+            # HTML, so escape everything we interpolate and keep only our
+            # own <br> markup
+            esc = markupsafe.escape
+            html = (str(esc(prefix + problem["text"])) + "<br>Solutions:<br>"
+                    + "<br>".join(str(esc(n)) for n in numbered))
             self._alert(plain, "error", html=html)
         return warn_only
 
     def _alert(self, message: str, level: str = "info",
                html: Optional[str] = None, silent: bool = False) -> None:
         self._logger.info(f"[{level}] {message}")
-        self._events.append(dict(time=time.time(), level=level, msg=message))
+        with self._gate_lock:  # RLock: also called while the gate holds it
+            self._events.append(dict(time=time.time(), level=level, msg=message))
         self._plugin_manager.send_plugin_message(
             self._identifier,
             dict(type=level, msg=message, html=html, silent=silent))
@@ -265,17 +283,21 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
     def get_api_commands(self):
         return dict(refresh=[])
 
+    def _events_snapshot(self) -> List[Dict]:
+        with self._gate_lock:
+            return list(self._events)
+
     def on_api_command(self, command: str, data: Dict):
         if command == "refresh" and self._firmware is not None:
             refreshed = self._firmware.refresh()
             return flask.jsonify(refreshed=refreshed, state=self._firmware.snapshot(),
-                                 events=list(self._events))
+                                 events=self._events_snapshot())
         return flask.abort(400)
 
     def on_api_get(self, request):
         if self._firmware is None:
-            return flask.jsonify(state=None, events=list(self._events))
-        return flask.jsonify(state=self._firmware.snapshot(), events=list(self._events))
+            return flask.jsonify(state=None, events=self._events_snapshot())
+        return flask.jsonify(state=self._firmware.snapshot(), events=self._events_snapshot())
 
     # ------------------------------------------------------------------ #
     #  boilerplate                                                        #
@@ -302,16 +324,18 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
         return {"js": ["js/reality_check.js"]}
 
     def get_update_information(self):
+        # github_release, not github_commit: comparing a version string
+        # against a commit SHA would show every fresh install a perpetual
+        # "update available"
         return dict(
             reality_check=dict(
                 displayName="Reality Check",
                 displayVersion=self._plugin_version,
-                type="github_commit",
+                type="github_release",
                 user="BackSlasher",
                 repo="OctoPrint-Reality-Check",
-                branch="main",
                 current=self._plugin_version,
-                pip="https://github.com/BackSlasher/OctoPrint-Reality-Check/archive/main.zip",
+                pip="https://github.com/BackSlasher/OctoPrint-Reality-Check/archive/{target_version}.zip",
             )
         )
 
