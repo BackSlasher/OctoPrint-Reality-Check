@@ -3,6 +3,8 @@
 Blocks a serial-streamed print when the gcode's assumptions contradict the
 printer's reality.
 
+![A print sliced for PLA blocked because the printer reports PETG loaded](assets/block-popup.png)
+
 Prusa Buddy printers (CORE One, MK4 family, XL...) validate filament type and
 nozzle size themselves — but only for **file-based** prints (USB stick,
 PrusaLink, Connect), where the firmware can read the file's metadata. A print
@@ -30,9 +32,11 @@ single source of truth. Anything that updates the printer's loaded filament —
 its own load/change UI, or an external `M865 S"PETG" L0` — feeds the check
 automatically.
 
-A **Reality Check tab** in the OctoPrint UI shows the current firmware truth:
+A **Reality Check tab** in the OctoPrint UI shows the current firmware truth —
 per-tool filament, nozzle (with high-flow/hardened flags), cache age, a manual
-refresh button, and the last verdict.
+refresh button — plus a collapsible table of recent check results:
+
+![The Reality Check tab: printer inventory and recent checks](assets/tab-events.png)
 
 ## Requirements
 
@@ -52,6 +56,8 @@ Install manually using this URL:
 
 In the OctoPrint settings dialog (or `config.yaml` under
 `plugins.reality_check`):
+
+![The settings panel](assets/settings.png)
 
 | key | default | meaning |
 |---|---|---|
