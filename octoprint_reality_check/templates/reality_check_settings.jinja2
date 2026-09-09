@@ -1,0 +1,55 @@
+<form class="form-horizontal">
+    <h4>{{ _('Checks') }}</h4>
+    <div class="control-group">
+        <div class="controls">
+            <label class="checkbox">
+                <input type="checkbox"
+                       data-bind="checked: settings.plugins.reality_check.check_filament">
+                {{ _('Check filament type (gcode vs M865)') }}
+            </label>
+            <label class="checkbox">
+                <input type="checkbox"
+                       data-bind="checked: settings.plugins.reality_check.check_nozzle">
+                {{ _('Check nozzle size (gcode vs M862.1 Q)') }}
+            </label>
+            <label class="checkbox">
+                <input type="checkbox"
+                       data-bind="checked: settings.plugins.reality_check.warn_only">
+                {{ _('Warn only - show the mismatch but let the print run') }}
+            </label>
+        </div>
+    </div>
+
+    <h4>{{ _('Notifications') }}</h4>
+    <div class="control-group">
+        <label class="control-label">{{ _('Show popups for') }}</label>
+        <div class="controls">
+            <select data-bind="value: settings.plugins.reality_check.notify_level">
+                <option value="blocks">{{ _('Blocked prints only') }}</option>
+                <option value="all">{{ _('Everything (pass/skip too)') }}</option>
+            </select>
+            <span class="help-block">
+                {{ _('Every result is always written to the log and shown in the Reality Check tab.') }}
+            </span>
+        </div>
+    </div>
+
+    <h4>{{ _('Polling') }}</h4>
+    <div class="control-group">
+        <label class="control-label">{{ _('Refresh interval (s)') }}</label>
+        <div class="controls">
+            <input type="number" min="5" step="1" class="input-mini"
+                   data-bind="value: settings.plugins.reality_check.refresh_interval">
+        </div>
+    </div>
+    <div class="control-group">
+        <label class="control-label">{{ _('Tool count') }}</label>
+        <div class="controls">
+            <input type="number" min="1" max="8" step="1" class="input-mini"
+                   data-bind="value: settings.plugins.reality_check.tool_count">
+            <span class="help-block">
+                {{ _('Tools to poll - raise for toolchangers (INDX).') }}
+            </span>
+        </div>
+    </div>
+</form>

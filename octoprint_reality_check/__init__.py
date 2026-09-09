@@ -58,6 +58,18 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
         self._refresh_timer.start()
         self._logger.info("Reality Check armed")
 
+    def on_settings_save(self, data) -> None:
+        octoprint.plugin.SettingsPlugin.on_settings_save(self, data)
+        # apply without a restart: tool count feeds the poller directly,
+        # the timer is rebuilt for a changed interval
+        if self._firmware is not None:
+            self._firmware._tool_count = self._settings.get_int(["tool_count"])
+        if self._refresh_timer is not None:
+            self._refresh_timer.cancel()
+        self._refresh_timer = RepeatedTimer(self._settings.get_int(["refresh_interval"]),
+                                            self._refresh_tick, run_first=True)
+        self._refresh_timer.start()
+
     def _refresh_tick(self) -> None:
         if self._firmware is not None:
             self._firmware.refresh()
@@ -272,7 +284,10 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
         }
 
     def get_template_configs(self):
-        return [dict(type="tab", name="Reality Check", custom_bindings=True)]
+        return [
+            dict(type="tab", name="Reality Check", custom_bindings=True),
+            dict(type="settings", name="Reality Check", custom_bindings=False),
+        ]
 
     def get_assets(self):
         return {"js": ["js/reality_check.js"]}
