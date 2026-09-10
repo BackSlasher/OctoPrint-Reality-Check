@@ -99,8 +99,12 @@ a toolchanger.
 - **Why a cache, not a live query at print start:** OctoPrint calls the
   queuing hook from its serial send loop — the same loop that would have to
   transmit the query. Waiting there would deadlock, so the gate only reads
-  state gathered while the printer idled. Worst case is one refresh interval
-  of staleness, which produces a spurious prompt, never a bad print.
+  state gathered while the printer idled. The cache can therefore be up to
+  one refresh interval old (30 s by default) — enough, in theory, to miss a
+  filament swapped just before the print starts. In practice a swap
+  (heat, unload, load, purge, confirm the type) takes longer than that, so
+  keep `refresh_interval` short. The tab shows the cache age; a refresh that
+  gets no answer keeps the old value, so the age keeps growing.
 - **How serial "RPC" works here:** OctoPrint has no request/response
   primitive. The plugin tags its query, the `gcode.sent` hook spots the tag
   and opens a capture window, and the window closes when a received line

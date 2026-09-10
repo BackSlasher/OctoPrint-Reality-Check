@@ -128,6 +128,25 @@ class TestGcodeMeta(unittest.TestCase):
         meta = gcode_meta.parse(path)
         self.assertEqual(meta["nozzle_diameters"], [0.45])
 
+    def test_empty_value_does_not_swallow_next_line(self):
+        # regression: \s* spanned the newline, so "; filament_type =" read
+        # "; nozzle_diameter = 0.4" as the filament type
+        path = self._write("; filament_type =\n"
+                           "; nozzle_diameter = 0.4\n"
+                           "; filament used [mm] =\n"
+                           "; nozzle_diameter = 0.6\n")
+        meta = gcode_meta.parse(path)
+        self.assertIsNone(meta["filament_types"])
+        self.assertEqual(meta["nozzle_diameters"], [0.4])
+        self.assertIsNone(meta["filament_used"])
+
+    def test_crlf_line_endings(self):
+        path = self._write("; filament_type = PETG;PLA\r\n"
+                           "; nozzle_diameter = 0.4,0.6\r\n")
+        meta = gcode_meta.parse(path)
+        self.assertEqual(meta["filament_types"], ["PETG", "PLA"])
+        self.assertEqual(meta["nozzle_diameters"], [0.4, 0.6])
+
     def test_footer_beyond_head_window(self):
         # config block must be found even in a file bigger than the head read
         filler = ("G1 X123.456 Y654.321 E0.12345\n" * 20000)

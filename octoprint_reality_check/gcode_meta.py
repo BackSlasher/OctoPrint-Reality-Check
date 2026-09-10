@@ -15,9 +15,14 @@ from typing import Any, Dict, List, Optional
 HEAD_BYTES = 8 * 1024
 TAIL_BYTES = 256 * 1024
 
-_FILAMENT_RE = re.compile(r"^;\s*filament_type\s*=\s*(.+)$", re.MULTILINE | re.IGNORECASE)
-_NOZZLE_RE = re.compile(r"^;\s*nozzle_diameter\s*=\s*(.+)$", re.MULTILINE | re.IGNORECASE)
-_USED_RE = re.compile(r"^;\s*filament used \[mm]\s*=\s*(.+)$", re.MULTILINE | re.IGNORECASE)
+# [ \t]*, not \s*: \s also matches the newline, so an empty value
+# ("; filament_type =") would swallow the NEXT line as its value
+_FILAMENT_RE = re.compile(r"^;[ \t]*filament_type[ \t]*=[ \t]*(.+)$",
+                          re.MULTILINE | re.IGNORECASE)
+_NOZZLE_RE = re.compile(r"^;[ \t]*nozzle_diameter[ \t]*=[ \t]*(.+)$",
+                        re.MULTILINE | re.IGNORECASE)
+_USED_RE = re.compile(r"^;[ \t]*filament used \[mm][ \t]*=[ \t]*(.+)$",
+                      re.MULTILINE | re.IGNORECASE)
 
 
 def _read_head_tail(path: str) -> str:
