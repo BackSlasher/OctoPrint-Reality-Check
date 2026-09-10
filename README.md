@@ -35,7 +35,8 @@ database, no companion plugins — world state is read from the printer
 itself, so anything that updates the printer's loaded filament (its own
 load/change UI, or an external `M865 S"PETG" L0`) feeds the check
 automatically. Unexpected states fail open — the plugin only blocks when
-it **knows** there's a mismatch.
+it **knows** there's a mismatch — unless you turn on paranoid mode, which
+blocks anything it can't fully verify.
 
 A dedicated **Reality Check tab** shows the current printer inventory —
 per-tool filament, nozzle (with flags), cache age, a manual refresh
@@ -73,6 +74,7 @@ In the OctoPrint settings dialog (or `config.yaml` under
 | `check_filament` | `true` | compare `; filament_type` against `M865` |
 | `check_nozzle` | `true` | compare `; nozzle_diameter` against `M862.1 Q` |
 | `warn_only` | `false` | pop the mismatch but let the print run |
+| `fail_closed` | `false` | paranoid mode: also block prints that can't be fully verified — no printer answer, a used tool with nothing loaded or never polled, missing gcode metadata, unreadable (e.g. SD-card) file. `warn_only` still applies |
 | `popup_on_pass` | `false` | also pop pass/skip messages (blocks always pop; everything is always logged and listed in the tab's event table) |
 | `refresh_interval` | `30` | seconds between idle polls of the firmware |
 
@@ -109,7 +111,8 @@ a toolchanger.
   explicit `name:---` means "nothing loaded".
 - Unknown states fail open with an explanatory message: no firmware answer,
   no metadata in the file, or nothing loaded all let the print through — the
-  plugin only blocks on a positive contradiction.
+  plugin only blocks on a positive contradiction. `fail_closed` (paranoid
+  mode) flips this: every one of those blocks the print instead.
 - SD-card prints (from OctoPrint's perspective) are not validated; prints
   started on the printer itself from a file get the firmware's own preview
   checks anyway.

@@ -28,6 +28,7 @@ from octoprint_reality_check import gcode_meta
 from octoprint_reality_check.firmware import FirmwareState
 
 IGNORE_SOLUTION = "Ignore warning (change in plugin settings)"
+PARANOID_OFF_SOLUTION = "Turn off paranoid mode (plugin settings)"
 
 
 class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
@@ -139,9 +140,9 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
                     self._gate_result = self._check(path)
                 except Exception:
                     self._logger.exception("Unexpected Reality Check error")
-                    self._quiet_alert("Reality Check hit an unexpected error; "
-                                      "letting the print through.", "info")
-                    self._gate_result = True
+                    self._gate_result = self._cannot_check(
+                        "unexpected error (see octoprint.log)",
+                        ["Check octoprint.log for the error"])
 
             if not self._gate_result:
                 # OctoPrint ignores cancellation while still STARTING; the
@@ -175,27 +176,30 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
 
     def _check(self, path: Optional[str]) -> bool:
         """True = let the print through."""
-        warn_only = self._settings.get_boolean(["warn_only"])
-
         if not path or not os.path.isfile(path):
-            self._quiet_alert("Reality Check could not read the selected gcode; "
-                              "letting the print through.", "info")
-            return True
+            return self._cannot_check(
+                "could not read the selected gcode (SD-card prints are not checked)",
+                ["Print from OctoPrint's local storage"])
 
         meta = gcode_meta.parse(path)
         if self._firmware is None or not self._firmware.known():
-            self._quiet_alert("Reality Check has no answer from the printer yet "
-                              "(M865 unsupported, or not polled since connect); "
-                              "cannot check this print.", "info")
-            return True
+            return self._cannot_check(
+                "no answer from the printer yet (M865 unsupported, or not "
+                "polled since connect)",
+                ["Refresh in the Reality Check tab, then print again"])
 
         problems: List[Dict[str, Any]] = []
         verified: List[str] = []
         skipped: List[str] = []
 
-        if self._settings.get_boolean(["check_filament"]) and meta["filament_types"]:
-            for tool, wanted in enumerate(meta["filament_types"]):
-                if not wanted or not gcode_meta.tool_used(meta, tool):
+        if self._settings.get_boolean(["check_filament"]):
+            if not meta["filament_types"]:
+                skipped.append("filament (gcode declares no filament_type)")
+            for tool, wanted in enumerate(meta["filament_types"] or []):
+                if not gcode_meta.tool_used(meta, tool):
+                    continue
+                if not wanted:
+                    skipped.append(f"filament (gcode declares none for tool {tool})")
                     continue
                 loaded = self._firmware.filament(tool)
                 if loaded is None:
@@ -213,8 +217,10 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
                 else:
                     verified.append(f"filament ({loaded})")
 
-        if self._settings.get_boolean(["check_nozzle"]) and meta["nozzle_diameters"]:
-            for tool, wanted_d in enumerate(meta["nozzle_diameters"]):
+        if self._settings.get_boolean(["check_nozzle"]):
+            if not meta["nozzle_diameters"]:
+                skipped.append("nozzle (gcode declares no nozzle_diameter)")
+            for tool, wanted_d in enumerate(meta["nozzle_diameters"] or []):
                 if not gcode_meta.tool_used(meta, tool):
                     continue
                 nozzle = self._firmware.nozzle(tool)
@@ -231,6 +237,13 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
                 else:
                     verified.append(f"nozzle ({nozzle['diameter']}mm)")
 
+        if skipped and self._settings.get_boolean(["fail_closed"]):
+            problems.append(dict(
+                text="Paranoid mode: could not verify " + ", ".join(skipped) + ".",
+                solutions=["Fix the above, refresh in the Reality Check tab, "
+                           "then print again",
+                           PARANOID_OFF_SOLUTION]))
+
         if not problems:
             # Only claim what was actually compared.
             parts = []
@@ -244,6 +257,22 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
                               "info" if skipped else "success")
             return True
 
+        return self._block(problems)
+
+    def _cannot_check(self, reason: str, solutions: List[str]) -> bool:
+        """The print can't be verified at all: fail open by default, closed
+        in paranoid mode (fail_closed)."""
+        if self._settings.get_boolean(["fail_closed"]):
+            return self._block([dict(
+                text=f"Paranoid mode: cannot verify this print - {reason}.",
+                solutions=solutions + [PARANOID_OFF_SOLUTION])])
+        self._quiet_alert(f"Reality Check cannot verify this print - {reason}; "
+                          "letting it through.", "info")
+        return True
+
+    def _block(self, problems: List[Dict[str, Any]]) -> bool:
+        """Pop every problem; False = stop the print (True under warn_only)."""
+        warn_only = self._settings.get_boolean(["warn_only"])
         for problem in problems:
             numbered = [f"{i + 1}. {s}" for i, s in enumerate(problem["solutions"])]
             prefix = "(warn only) " if warn_only else ""
@@ -308,6 +337,10 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
             "check_filament": True,
             "check_nozzle": True,
             "warn_only": False,
+            # paranoid mode: block (rather than pass) prints that can't be
+            # fully verified - no printer answer, nothing loaded, no gcode
+            # metadata, unreadable file
+            "fail_closed": False,
             "refresh_interval": 30,
             # blocks always pop up; this also pops the pass/skip chatter
             # (everything is always logged + in the tab's event table)
