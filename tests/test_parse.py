@@ -78,6 +78,34 @@ class TestFailureKeepsState(unittest.TestCase):
         self.assertEqual(state.nozzle(0)["diameter"], 0.4)
 
 
+class TestQueryCorrelation(unittest.TestCase):
+    """OctoPrint's real order is: sending hook, serial write, sent hook - and
+    the reply is read on another thread, so it can land before the sent
+    hook runs.  The window must already be open by then."""
+
+    class _InstantPrinter(TestFailureKeepsState._DeadPrinter):
+        state = None
+
+        def commands(self, command, tags=None):
+            self.state.on_gcode_sending(None, "sending", command, None, None, tags=tags)
+            # the printer answers before the send thread reaches "sent"
+            if command.startswith("M865"):
+                self.state.on_gcode_received(None, "name:PLA")
+            else:
+                self.state.on_gcode_received(None, "echo:  M862.1 T0 P0.60 A0 F0")
+            self.state.on_gcode_received(None, "ok")
+
+    def test_instant_reply_is_captured(self):
+        import logging
+        firmware.RESPONSE_TIMEOUT = 0.05  # a regression fails fast, not in 10s
+        printer = self._InstantPrinter()
+        state = firmware.FirmwareState(printer, logging.getLogger("t"))
+        printer.state = state
+        self.assertTrue(state.refresh())
+        self.assertEqual(state.filament(0), "PLA")
+        self.assertEqual(state.nozzle(0)["diameter"], 0.6)
+
+
 class TestGcodeMeta(unittest.TestCase):
     def _write(self, content: str) -> str:
         f = tempfile.NamedTemporaryFile("w", suffix=".gcode", delete=False)

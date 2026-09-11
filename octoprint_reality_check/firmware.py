@@ -7,8 +7,8 @@ prints -- the firmware's checks only run when it opens a file itself -- so
 OctoPrint has to ask and compare.
 
 OctoPrint has no request/response primitive for serial.  The query is
-correlated through two hooks: the ``gcode.sent`` hook spots our tagged
-command leaving the wire and opens a capture window, and the
+correlated through two hooks: the ``gcode.sending`` hook spots our tagged
+command just before it is written and opens a capture window, and the
 ``gcode.received`` hook closes it when a line MATCHES THE EXPECTED ANSWER
 (``name:`` for M865, ``M862.1 T..`` for M862.1 Q).  Completion is by
 content, deliberately not by ``ok``: if a refresh runs while the comm
@@ -17,6 +17,14 @@ print), their stray ``ok`` acknowledgements would close an ok-based window
 before the answer arrived.  That exact race shipped in 0.1.0 and clobbered
 good state.
 
+Why ``sending`` and not ``sent``: OctoPrint runs the ``sent`` hooks on its
+send thread AFTER the serial write, while replies are read and dispatched
+on a separate monitor thread.  M865 answers within milliseconds, so the
+reply can be handled before a ``sent``-opened window exists, and the
+dropped answer then shows up as a timeout.  (Suspected, not reproduced,
+for the sporadic idle timeouts seen through 0.5.0.)  The ``sending``
+phase runs before the write, which closes that window either way.
+
 Failure semantics, learned from the same incident: a query that times out
 KEEPS the previous value -- only a successful answer may change the cache,
 and only an explicit empty name (``name:---``) means "nothing loaded".
@@ -24,7 +32,8 @@ and only an explicit empty name (``name:---``) means "nothing loaded".
 Deadlock note: OctoPrint calls the ``gcode.queuing`` hook (where the
 pre-print gate runs) from its send loop -- the same loop that would have to
 transmit a query.  The gate therefore only reads this cache, refreshed on
-connect, after prints, and on a timer while the printer idles.
+connect and on a timer while the printer idles (minus a settle period
+after each print -- see the plugin's on_event).
 
 Expected responses::
 
@@ -108,8 +117,10 @@ class FirmwareState:
     #  comm hooks (delegated from the plugin)                             #
     # ------------------------------------------------------------------ #
 
-    def on_gcode_sent(self, comm_instance, phase, cmd, cmd_type, gcode,
-                      subcode=None, tags=None, *args, **kwargs) -> None:
+    def on_gcode_sending(self, comm_instance, phase, cmd, cmd_type, gcode,
+                         subcode=None, tags=None, *args, **kwargs) -> None:
+        # must return None: in the sending phase a return value rewrites
+        # the command about to go out
         if tags and QUERY_TAG in tags:
             with self._state_lock:
                 # only the command the CURRENT query waits on may open the

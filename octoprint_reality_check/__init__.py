@@ -12,6 +12,7 @@ mismatch (or warns, with warn_only).
 from __future__ import absolute_import, annotations
 
 import collections
+import math
 import os
 import threading
 import time
@@ -30,6 +31,11 @@ from octoprint_reality_check.firmware import FirmwareState
 IGNORE_SOLUTION = "Ignore warning (change in plugin settings)"
 PARANOID_OFF_SOLUTION = "Turn off paranoid mode (plugin settings)"
 
+# OctoPrint reports Operational once the last lines are acknowledged, while
+# the printer is still busy finishing (end-script moves etc.); queries sent
+# in the first ~30s after a print went unanswered.  Skip polling this long.
+SETTLE_SECONDS = 60
+
 
 class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
                          octoprint.plugin.SettingsPlugin,
@@ -45,6 +51,8 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
         self._gate_lock = threading.RLock()
         self._gate_result: Optional[bool] = None
         self._gate_path: Optional[str] = None
+        # timer ticks to skip after a print (guarded by _gate_lock)
+        self._dead_ticks = 0
         # bounded in-session history for the tab's collapsible event table;
         # the full trail lives in octoprint.log
         self._events = collections.deque(maxlen=20)
@@ -89,6 +97,10 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
             self._refresh_timer.start()
 
     def _refresh_tick(self) -> None:
+        with self._gate_lock:
+            if self._dead_ticks > 0:
+                self._dead_ticks -= 1
+                return
         if self._firmware is not None:
             self._firmware.refresh()
 
@@ -102,7 +114,9 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
             with self._gate_lock:
                 self._gate_result = None
                 self._gate_path = None
-            self._refresh_async()
+                # no refresh now: the printer is still busy finishing; let
+                # the timer idle through the settle period (>= 2 ticks)
+                self._dead_ticks = max(2, math.ceil(SETTLE_SECONDS / self._interval()))
         elif event == Events.CONNECTED:
             self._refresh_async()
 
@@ -110,10 +124,10 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
     #  comm hooks                                                         #
     # ------------------------------------------------------------------ #
 
-    def on_gcode_sent(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
+    def on_gcode_sending(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
         if self._firmware is not None:
-            self._firmware.on_gcode_sent(comm_instance, phase, cmd, cmd_type,
-                                         gcode, *args, **kwargs)
+            self._firmware.on_gcode_sending(comm_instance, phase, cmd, cmd_type,
+                                            gcode, *args, **kwargs)
 
     def on_gcode_received(self, comm_instance, line, *args, **kwargs):
         if self._firmware is not None:
@@ -385,6 +399,6 @@ def __plugin_load__() -> None:
     __plugin_hooks__ = {
         "octoprint.plugin.softwareupdate.check_config": __plugin_implementation__.get_update_information,
         "octoprint.comm.protocol.gcode.queuing": __plugin_implementation__.gate_queuing,
-        "octoprint.comm.protocol.gcode.sent": __plugin_implementation__.on_gcode_sent,
+        "octoprint.comm.protocol.gcode.sending": __plugin_implementation__.on_gcode_sending,
         "octoprint.comm.protocol.gcode.received": __plugin_implementation__.on_gcode_received,
     }

@@ -186,6 +186,20 @@ class TestCheck(unittest.TestCase):
             self.assertEqual(verdict, expected)
             self.assertEqual(plugin._printer.cancel_print.called, paranoid)
 
+    def test_polling_settles_after_print(self):
+        # the printer is still busy finishing right after a print: no
+        # immediate refresh, then ~60s of dead ticks (>= 2), then polling
+        for event in ("PRINT_DONE", "PRINT_CANCELLED", "PRINT_FAILED"):
+            for interval, dead in ((30, 2), (5, 12), (120, 2)):
+                plugin = self._plugin(refresh_interval=interval)
+                plugin._firmware = mock.Mock()
+                plugin.on_event(getattr(plugin_mod.Events, event), {})
+                for _ in range(dead):
+                    plugin._refresh_tick()
+                plugin._firmware.refresh.assert_not_called()
+                plugin._refresh_tick()
+                plugin._firmware.refresh.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -105,9 +105,16 @@ a toolchanger.
   (heat, unload, load, purge, confirm the type) takes longer than that, so
   keep `refresh_interval` short. The tab shows the cache age; a refresh that
   gets no answer keeps the old value, so the age keeps growing.
+- **Polling pauses right after a print.** OctoPrint reports the printer
+  ready as soon as the last lines are acknowledged, while the printer is
+  still finishing up (end-script moves and the like) — queries sent then
+  went unanswered. So the first ~60 s of timer ticks after a print, done or
+  cancelled, are skipped (two ticks at the default interval).
 - **How serial "RPC" works here:** OctoPrint has no request/response
-  primitive. The plugin tags its query, the `gcode.sent` hook spots the tag
-  and opens a capture window, and the window closes when a received line
+  primitive. The plugin tags its query, the `gcode.sending` hook spots the
+  tag and opens a capture window just before the line is written (not
+  `gcode.sent`: that runs after the write, and a fast reply read on
+  OctoPrint's other thread could beat it), and the window closes when a received line
   matches the expected answer (`name:` / `M862.1 T..`). Completion is by
   content, deliberately not by `ok` — stray acknowledgements from in-flight
   commands (e.g. right after a cancelled print) must not close the window
