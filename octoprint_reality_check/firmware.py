@@ -28,6 +28,9 @@ phase runs before the write, which closes that window either way.
 Failure semantics, learned from the same incident: a query that times out
 KEEPS the previous value -- only a successful answer may change the cache,
 and only an explicit empty name (``name:---``) means "nothing loaded".
+The kept value is marked stale, though (``filament_fresh`` /
+``nozzle_fresh``): an unanswered query means the printer was busy -- e.g.
+mid filament swap -- so the value predates whatever it was doing.
 
 Deadlock note: OctoPrint calls the ``gcode.queuing`` hook (where the
 pre-print gate runs) from its send loop -- the same loop that would have to
@@ -101,6 +104,9 @@ class FirmwareState:
 
         self._filaments: Dict[int, Optional[str]] = {}
         self._nozzles: Dict[int, Dict[str, Any]] = {}
+        # per tool: did the most recent query get an answer?
+        self._filament_fresh: Dict[int, bool] = {}
+        self._nozzle_fresh: Dict[int, bool] = {}
         self._cache_time: Optional[float] = None
 
     def _tool_count(self) -> int:
@@ -198,18 +204,22 @@ class FirmwareState:
 
         for tool in range(self._tool_count()):
             line = self._query(f"M865 I{tool}", FILAMENT_ANSWER_RE)
-            if line is not None:
-                any_success = True
-                with self._state_lock:
+            with self._state_lock:
+                self._filament_fresh[tool] = line is not None
+                if line is not None:
                     self._filaments[tool] = parse_filament_line(line)
+            any_success |= line is not None
 
             line = self._query(f"M862.1 Q T{tool}", NOZZLE_ANSWER_RE)
-            if line is not None:
-                nozzle = parse_nozzle_line(line)
-                if nozzle is not None:
-                    any_success = True
-                    with self._state_lock:
-                        self._nozzles[nozzle.pop("tool")] = nozzle
+            nozzle = parse_nozzle_line(line) if line is not None else None
+            with self._state_lock:
+                if nozzle is None:
+                    self._nozzle_fresh[tool] = False
+                else:
+                    answered = nozzle.pop("tool")
+                    self._nozzles[answered] = nozzle
+                    self._nozzle_fresh[answered] = True
+            any_success |= nozzle is not None
 
         if any_success:
             with self._state_lock:
@@ -239,14 +249,27 @@ class FirmwareState:
         with self._state_lock:
             return tool in self._filaments
 
+    def filament_fresh(self, tool: int) -> bool:
+        """False when the latest query for this tool went unanswered: the
+        printer was busy (e.g. mid filament swap), so the cached value
+        predates whatever it was doing."""
+        with self._state_lock:
+            return self._filament_fresh.get(tool, False)
+
     def nozzle(self, tool: int) -> Optional[Dict[str, Any]]:
         with self._state_lock:
             return self._nozzles.get(tool)
+
+    def nozzle_fresh(self, tool: int) -> bool:
+        with self._state_lock:
+            return self._nozzle_fresh.get(tool, False)
 
     def snapshot(self) -> Dict[str, Any]:
         with self._state_lock:
             return {
                 "filaments": dict(self._filaments),
                 "nozzles": {t: dict(n) for t, n in self._nozzles.items()},
+                "filament_fresh": dict(self._filament_fresh),
+                "nozzle_fresh": dict(self._nozzle_fresh),
                 "age": None if self._cache_time is None else time.monotonic() - self._cache_time,
             }

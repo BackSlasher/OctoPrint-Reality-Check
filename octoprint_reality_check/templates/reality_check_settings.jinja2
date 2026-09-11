@@ -1,5 +1,8 @@
 <form class="form-horizontal">
     <h4>{{ _('Checks') }}</h4>
+    <p class="help-block">
+        {{ _('Every tool the print uses is checked, up to the extruder count in the printer profile (Settings > Printer Profiles > Hotend & extruder).') }}
+    </p>
     <div class="control-group">
         <div class="controls">
             <label class="checkbox">
@@ -12,18 +15,27 @@
                        data-bind="checked: settings.plugins.reality_check.check_nozzle">
                 {{ _('Check nozzle size (gcode vs M862.1 Q)') }}
             </label>
+        </div>
+    </div>
+
+    <h4>{{ _('Blocking') }}</h4>
+    <div class="control-group">
+        <div class="controls">
             <label class="checkbox">
                 <input type="checkbox"
                        data-bind="checked: settings.plugins.reality_check.warn_only">
-                {{ _('Warn only - show the mismatch but let the print run') }}
+                {{ _('Warn only') }}
             </label>
+            <span class="help-block">
+                {{ _('Show the problem but let the print run.') }}
+            </span>
             <label class="checkbox">
                 <input type="checkbox"
                        data-bind="checked: settings.plugins.reality_check.fail_closed">
-                {{ _('Paranoid mode - also block prints that cannot be fully verified') }}
+                {{ _('Paranoid mode') }}
             </label>
             <span class="help-block">
-                {{ _('By default anything the plugin cannot check (no answer from the printer, nothing loaded, no metadata in the gcode, unreadable file) lets the print through. Paranoid mode blocks those too. Warn only still applies.') }}
+                {{ _('Also block prints that cannot be fully verified: no answer from the printer, a stale reading after the printer was busy, nothing loaded, no metadata in the gcode, an unreadable file. By default these pass. Warn only still applies.') }}
             </span>
         </div>
     </div>
@@ -52,7 +64,7 @@
                 <span class="add-on">s</span>
             </div>
             <span class="help-block">
-                {{ _('Tool count follows the printer profile (Settings > Printer Profiles > Print bed & build volume).') }}
+                {{ _('How often the printer is asked while idle. Polling pauses for about a minute after each print.') }}
             </span>
         </div>
     </div>

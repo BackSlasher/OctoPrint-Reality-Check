@@ -76,6 +76,8 @@ class TestFailureKeepsState(unittest.TestCase):
         self.assertFalse(state.refresh())          # nothing answered
         self.assertEqual(state.filament(0), "PETG")  # previous value survives
         self.assertEqual(state.nozzle(0)["diameter"], 0.4)
+        self.assertFalse(state.filament_fresh(0))    # ...but is marked stale
+        self.assertFalse(state.nozzle_fresh(0))
 
 
 class TestQueryCorrelation(unittest.TestCase):
@@ -104,6 +106,28 @@ class TestQueryCorrelation(unittest.TestCase):
         self.assertTrue(state.refresh())
         self.assertEqual(state.filament(0), "PLA")
         self.assertEqual(state.nozzle(0)["diameter"], 0.6)
+
+    def test_busy_printer_marks_values_stale_until_answered(self):
+        import logging
+        firmware.RESPONSE_TIMEOUT = 0.05
+        printer = self._InstantPrinter()
+        state = firmware.FirmwareState(printer, logging.getLogger("t"))
+        printer.state = state
+        state.refresh()
+        self.assertTrue(state.filament_fresh(0))
+        self.assertTrue(state.nozzle_fresh(0))
+        # printer goes busy (e.g. filament load dialog) and stops answering
+        state._printer = TestFailureKeepsState._DeadPrinter()
+        self.assertFalse(state.refresh())
+        self.assertEqual(state.filament(0), "PLA")  # value kept...
+        self.assertFalse(state.filament_fresh(0))   # ...but not trusted
+        self.assertFalse(state.nozzle_fresh(0))
+        self.assertEqual(state.snapshot()["filament_fresh"], {0: False})
+        # the next answered poll makes it fresh again
+        state._printer = printer
+        self.assertTrue(state.refresh())
+        self.assertTrue(state.filament_fresh(0))
+        self.assertTrue(state.nozzle_fresh(0))
 
 
 class TestGcodeMeta(unittest.TestCase):

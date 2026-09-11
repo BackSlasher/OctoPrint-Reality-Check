@@ -216,11 +216,15 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
                     skipped.append(f"filament (gcode declares none for tool {tool})")
                     continue
                 loaded = self._firmware.filament(tool)
-                if loaded is None:
-                    if self._firmware.filament_known(tool):
-                        skipped.append(f"filament (printer reports none loaded in tool {tool})")
-                    else:
-                        skipped.append(f"filament (no answer yet for tool {tool})")
+                if not self._firmware.filament_known(tool):
+                    skipped.append(f"filament (no answer yet for tool {tool})")
+                elif not self._firmware.filament_fresh(tool):
+                    # the printer was busy (e.g. mid filament swap): the
+                    # value predates it, so trust it neither way
+                    skipped.append(f"filament (stale - last query for tool {tool} "
+                                   f"went unanswered)")
+                elif loaded is None:
+                    skipped.append(f"filament (printer reports none loaded in tool {tool})")
                 elif wanted.lower() != loaded.lower():
                     problems.append(dict(
                         text=f"gcode is sliced for {wanted} but printer has "
@@ -240,6 +244,10 @@ class RealityCheckPlugin(octoprint.plugin.StartupPlugin,
                 nozzle = self._firmware.nozzle(tool)
                 if nozzle is None:
                     skipped.append(f"nozzle (no answer for tool {tool})")
+                    continue
+                if not self._firmware.nozzle_fresh(tool):
+                    skipped.append(f"nozzle (stale - last query for tool {tool} "
+                                   f"went unanswered)")
                     continue
                 if abs(wanted_d - nozzle["diameter"]) > 0.01:
                     problems.append(dict(

@@ -67,14 +67,14 @@ In the OctoPrint settings dialog (or `config.yaml` under
 
 ![The settings panel](assets/settings.png)
 
-*The settings panel: check toggles, warn-only, popup level, and the polling interval.*
+*The settings panel: which checks run, how blocking behaves (warn only, paranoid mode), popups, and the polling interval.*
 
 | key | default | meaning |
 |---|---|---|
 | `check_filament` | `true` | compare `; filament_type` against `M865` |
 | `check_nozzle` | `true` | compare `; nozzle_diameter` against `M862.1 Q` |
 | `warn_only` | `false` | pop the mismatch but let the print run |
-| `fail_closed` | `false` | paranoid mode: also block prints that can't be fully verified — no printer answer, a used tool with nothing loaded or never polled, missing gcode metadata, unreadable (e.g. SD-card) file. `warn_only` still applies |
+| `fail_closed` | `false` | paranoid mode: also block prints that can't be fully verified — no printer answer, a stale reading (the printer's latest answer was missed), a used tool with nothing loaded or never polled, missing gcode metadata, unreadable (e.g. SD-card) file. `warn_only` still applies |
 | `popup_on_pass` | `false` | also pop pass/skip messages (blocks always pop; everything is always logged and listed in the tab's event table) |
 | `refresh_interval` | `30` | seconds between idle polls of the firmware |
 
@@ -85,8 +85,9 @@ tab's event table keeps the recent history either way:
 
 *A passing check announcing itself (`popup_on_pass` on), with a blocked attempt visible in the event history.*
 
-Tool count follows the printer profile's extruder count — raise it there for
-a toolchanger.
+Tool count follows the printer profile's extruder count (Settings > Printer
+Profiles > Hotend & extruder) — raise it there for a toolchanger. With
+paranoid mode on, a tool the print uses beyond that count blocks the print.
 
 ## API
 
@@ -99,12 +100,15 @@ a toolchanger.
 - **Why a cache, not a live query at print start:** OctoPrint calls the
   queuing hook from its serial send loop — the same loop that would have to
   transmit the query. Waiting there would deadlock, so the gate only reads
-  state gathered while the printer idled. The cache can therefore be up to
-  one refresh interval old (30 s by default) — enough, in theory, to miss a
-  filament swapped just before the print starts. In practice a swap
-  (heat, unload, load, purge, confirm the type) takes longer than that, so
-  keep `refresh_interval` short. The tab shows the cache age; a refresh that
-  gets no answer keeps the old value, so the age keeps growing.
+  state gathered while the printer idled, so the cache lags the printer.
+  While the printer is busy — e.g. in its filament load/unload dialog —
+  queries go unanswered and the old value is kept, so right after a swap
+  the cache still holds the previous filament until the next successful
+  poll (up to one refresh interval, 30 s by default). To cover that window,
+  a value whose latest query went unanswered counts as **stale**: the check
+  reports it as SKIPPED rather than trusting it (paranoid mode blocks), and
+  the tab marks it. Normally a good read lands between finishing the load
+  and starting the print; keep `refresh_interval` short.
 - **Polling pauses right after a print.** OctoPrint reports the printer
   ready as soon as the last lines are acknowledged, while the printer is
   still finishing up (end-script moves and the like) — queries sent then

@@ -80,7 +80,8 @@ class TestCheck(unittest.TestCase):
         self.addCleanup(os.unlink, f.name)
         return f.name
 
-    def _plugin(self, filaments=None, nozzles=None, known=True, **settings):
+    def _plugin(self, filaments=None, nozzles=None, known=True,
+                stale_filaments=(), stale_nozzles=(), **settings):
         plugin = plugin_mod.RealityCheckPlugin()
         values = plugin.get_settings_defaults()
         values.update(settings)
@@ -92,6 +93,10 @@ class TestCheck(unittest.TestCase):
         firmware = FirmwareState(None, plugin._logger)
         firmware._filaments.update(filaments or {})
         firmware._nozzles.update(nozzles or {})
+        firmware._filament_fresh.update(
+            {t: t not in stale_filaments for t in (filaments or {})})
+        firmware._nozzle_fresh.update(
+            {t: t not in stale_nozzles for t in (nozzles or {})})
         if known:
             firmware._cache_time = 1.0
         plugin._firmware = firmware
@@ -185,6 +190,34 @@ class TestCheck(unittest.TestCase):
                                           tags={"source:job"})
             self.assertEqual(verdict, expected)
             self.assertEqual(plugin._printer.cancel_print.called, paranoid)
+
+    def _last_msg(self, plugin):
+        return plugin._plugin_manager.send_plugin_message.call_args.args[1]["msg"]
+
+    def test_stale_filament_is_trusted_neither_way(self):
+        # the printer was busy (e.g. mid filament swap) and left the latest
+        # query unanswered: whether the kept value matches or not, it is
+        # unverified - pass with SKIPPED by default, block in paranoid mode
+        path = self._gcode(TWO_TOOLS)  # T0 wants PETG
+        nozzles = {0: self._nozzle(), 1: self._nozzle()}
+        for kept in ("PETG", "PLA"):
+            plugin = self._plugin({0: kept, 1: "PLA"}, nozzles, stale_filaments={0})
+            self.assertTrue(plugin._check(path))
+            self.assertEqual(self._levels(plugin), ["info"])
+            self.assertIn("filament (stale", self._last_msg(plugin))
+            self.assertFalse(self._plugin({0: kept, 1: "PLA"}, nozzles,
+                                          stale_filaments={0},
+                                          fail_closed=True)._check(path))
+
+    def test_stale_nozzle_is_trusted_neither_way(self):
+        path = self._gcode(TWO_TOOLS)
+        filaments = {0: "PETG", 1: "PLA"}
+        nozzles = {0: self._nozzle(0.6), 1: self._nozzle()}  # T0 would mismatch
+        plugin = self._plugin(filaments, nozzles, stale_nozzles={0})
+        self.assertTrue(plugin._check(path))
+        self.assertIn("nozzle (stale", self._last_msg(plugin))
+        self.assertFalse(self._plugin(filaments, nozzles, stale_nozzles={0},
+                                      fail_closed=True)._check(path))
 
     def test_polling_settles_after_print(self):
         # the printer is still busy finishing right after a print: no

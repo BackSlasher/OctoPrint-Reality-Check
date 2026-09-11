@@ -36,6 +36,10 @@ $(function () {
             }
             var filaments = state.filaments || {};
             var nozzles = state.nozzles || {};
+            // false = the latest query went unanswered; value kept but not
+            // trusted by the check
+            var filamentFresh = state.filament_fresh || {};
+            var nozzleFresh = state.nozzle_fresh || {};
             var keys = Object.keys(filaments);
             Object.keys(nozzles).forEach(function (k) {
                 if (keys.indexOf(k) < 0) keys.push(k);
@@ -48,8 +52,10 @@ $(function () {
                 if (n && n.hardened) flags.push("hardened");
                 return {
                     tool: k,
-                    filament: filaments[k] || "(none loaded)",
-                    nozzle: n ? n.diameter.toFixed(2) + " mm" : "?",
+                    filament: (filaments[k] || "(none loaded)")
+                        + (filamentFresh[k] === false ? " (stale)" : ""),
+                    nozzle: (n ? n.diameter.toFixed(2) + " mm" : "?")
+                        + (n && nozzleFresh[k] === false ? " (stale)" : ""),
                     flags: flags.join(", ")
                 };
             }));
